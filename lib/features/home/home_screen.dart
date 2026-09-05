@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../data/repositories/medicine_repository.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -62,51 +63,53 @@ class HomeScreen extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  context.push('/medicines');
-                },
-                icon: const Icon(Icons.medication_outlined),
-                label: const Text('Browse All Medicines'),
-              ),
-            ),
-
-            const SizedBox(height: 36),
-
-            Text(
-              'Why PharmaZen?',
-              style: Theme.of(context).textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700),
-            ),
-
-            const SizedBox(height: 16),
-
-            const _FeatureCard(
-              icon: Icons.offline_bolt_outlined,
-              title: 'Works Offline',
-              description:
-                  'Search the local medicine database even without internet.',
+            _BrowseButton(
+              icon: Icons.medication_outlined,
+              label: MedicineSearchMode.name.label,
+              mode: MedicineSearchMode.name,
             ),
 
             const SizedBox(height: 12),
 
-            const _FeatureCard(
-              icon: Icons.inventory_2_outlined,
-              title: 'Live Stock When Online',
-              description: 'Connect to PharmaZen services to check current availability.',
+            _BrowseButton(
+              icon: Icons.category_outlined,
+              label: MedicineSearchMode.category.label,
+              mode: MedicineSearchMode.category,
             ),
 
             const SizedBox(height: 12),
 
-            const _FeatureCard(
-              icon: Icons.receipt_long_outlined,
-              title: 'Orders & Prescriptions',
-              description: 'Order medicines and submit prescriptions securely when online.',
+            _BrowseButton(
+              icon: Icons.medication_liquid_outlined,
+              label: MedicineSearchMode.generic.label,
+              mode: MedicineSearchMode.generic,
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _BrowseButton extends StatelessWidget {
+  const _BrowseButton({
+    required this.icon,
+    required this.label,
+    required this.mode,
+  });
+
+  final IconData icon;
+  final String label;
+  final MedicineSearchMode mode;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => context.push('/medicines?mode=${mode.name}'),
+        icon: Icon(icon),
+        label: Text(label),
       ),
     );
   }
@@ -153,70 +156,6 @@ class _Header extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _FeatureCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String description;
-
-  const _FeatureCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          children: [
-            Container(
-              width: 50,
-              height: 50,
-              decoration: BoxDecoration(
-                color: AppColors.lightGreen,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.medication_outlined,
-                color: AppColors.primaryGreen,
-              ),
-            ),
-
-            const SizedBox(width: 16),
-
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                    ),
-                  ),
-
-                  const SizedBox(height: 5),
-
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
