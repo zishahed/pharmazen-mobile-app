@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../data/providers/medicine_providers.dart';
 import '../../data/repositories/medicine_repository.dart';
@@ -98,7 +99,10 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
     return ListView.separated(
       itemCount: results.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, index) => MedicineTile(medicine: results[index]),
+      itemBuilder: (context, index) => MedicineTile(
+        medicine: results[index],
+        onTap: () => context.push('/medicine', extra: results[index]),
+      ),
     );
   }
 }

@@ -144,6 +144,33 @@ void main() {
 
     await db.close();
   });
+
+  test('fetchDetails returns all fields for a generic', () async {
+    final db = AppDatabase(NativeDatabase(File('assets/database/medicines.db')));
+    final repo = MedicineRepository(db);
+
+    final medicines = await repo.search('Pana', MedicineSearchMode.name);
+    final medicine = medicines.first;
+    final genericId = medicine.genericId;
+    expect(genericId, isNotNull);
+
+    final details = await repo.fetchDetails(genericId!);
+    expect(details, isNotNull);
+    expect(details!.genericId, genericId);
+
+    await db.close();
+  });
+
+  test('fetchDetails returns null for unknown generic', () async {
+    final db = AppDatabase(NativeDatabase(File('assets/database/medicines.db')));
+    final repo = MedicineRepository(db);
+
+    final details = await repo.fetchDetails(-1);
+
+    expect(details, isNull);
+
+    await db.close();
+  });
 }
 
 void _expectSortedIgnoreCase(List<String> values) {

@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../../domain/models/medicine.dart';
+import '../../domain/models/medicine_details.dart';
 import '../db/app_database.dart';
 
 enum MedicineSearchMode { name, category, generic, indication }
@@ -161,6 +162,53 @@ class MedicineRepository {
         LIMIT 100
       ''',
     };
+  }
+
+  Future<MedicineDetails?> fetchDetails(int genericId) async {
+    final rows = await _db.customSelect('''
+      SELECT generic_id, generic_name, slug, monograph_link,
+             drug_class, indication, indication_description,
+             therapeutic_class_description, pharmacology_description,
+             dosage_description, administration_description,
+             interaction_description, contraindications_description,
+             side_effects_description, pregnancy_and_lactation_description,
+             precautions_description, pediatric_usage_description,
+             overdose_effects_description, duration_of_treatment_description,
+             reconstitution_description, storage_conditions_description
+      FROM generics
+      WHERE generic_id = ?
+    ''', variables: [Variable.withInt(genericId)]).get();
+
+    if (rows.isEmpty) return null;
+    final data = rows.single.data;
+
+    return MedicineDetails(
+      genericId: data['generic_id'] as int,
+      genericName: data['generic_name'] as String?,
+      slug: data['slug'] as String?,
+      monographLink: data['monograph_link'] as String?,
+      drugClass: data['drug_class'] as String?,
+      indication: data['indication'] as String?,
+      indicationDescription: data['indication_description'] as String?,
+      therapeuticClassDescription: data['therapeutic_class_description'] as String?,
+      pharmacologyDescription: data['pharmacology_description'] as String?,
+      dosageDescription: data['dosage_description'] as String?,
+      administrationDescription: data['administration_description'] as String?,
+      interactionDescription: data['interaction_description'] as String?,
+      contraindicationsDescription:
+          data['contraindications_description'] as String?,
+      sideEffectsDescription: data['side_effects_description'] as String?,
+      pregnancyAndLactationDescription:
+          data['pregnancy_and_lactation_description'] as String?,
+      precautionsDescription: data['precautions_description'] as String?,
+      pediatricUsageDescription: data['pediatric_usage_description'] as String?,
+      overdoseEffectsDescription: data['overdose_effects_description'] as String?,
+      durationOfTreatmentDescription:
+          data['duration_of_treatment_description'] as String?,
+      reconstitutionDescription: data['reconstitution_description'] as String?,
+      storageConditionsDescription:
+          data['storage_conditions_description'] as String?,
+    );
   }
 
   Medicine _toMedicine(QueryRow row) {

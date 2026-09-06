@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
-import '../../../../app/theme/app_colors.dart';
-import '../../../../domain/models/medicine.dart';
+import '../../../app/theme/app_colors.dart';
+import '../../../domain/models/medicine.dart';
 
 class MedicineTile extends StatelessWidget {
-  const MedicineTile({super.key, required this.medicine});
+  const MedicineTile({super.key, required this.medicine, this.onTap});
 
   final Medicine medicine;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -17,6 +18,7 @@ class MedicineTile extends StatelessWidget {
 
     return Card(
       child: ListTile(
+        onTap: onTap,
         leading: const CircleAvatar(
           backgroundColor: AppColors.lightGreen,
           foregroundColor: AppColors.primaryGreen,

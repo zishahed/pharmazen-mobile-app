@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/providers/medicine_providers.dart';
@@ -157,7 +158,10 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
     return ListView.separated(
       itemCount: results.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, index) => MedicineTile(medicine: results[index]),
+      itemBuilder: (context, index) => MedicineTile(
+        medicine: results[index],
+        onTap: () => context.push('/medicine', extra: results[index]),
+      ),
     );
   }
 }
