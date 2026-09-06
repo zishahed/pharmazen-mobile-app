@@ -7,6 +7,7 @@ import '../../app/theme/app_colors.dart';
 import '../../data/providers/medicine_providers.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
+import 'widgets/medicines_widgets.dart';
 
 class MedicinesScreen extends ConsumerStatefulWidget {
   const MedicinesScreen({super.key, required this.mode});
@@ -128,7 +129,7 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
     }
 
     if (_error != null) {
-      return _MessagePlaceholder(
+      return MessagePlaceholder(
         icon: Icons.error_outline_rounded,
         message: 'Something went wrong while searching.',
         trailing: TextButton(
@@ -140,14 +141,14 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
 
     final results = _results;
     if (results == null) {
-      return _MessagePlaceholder(
+      return MessagePlaceholder(
         icon: Icons.search_rounded,
         message: 'Start typing to see matching medicines.',
       );
     }
 
     if (results.isEmpty) {
-      return _MessagePlaceholder(
+      return MessagePlaceholder(
         icon: Icons.medication_outlined,
         message: 'No medicines found for "${_controller.text.trim()}".',
       );
@@ -156,85 +157,7 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
     return ListView.separated(
       itemCount: results.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, index) =>
-          _MedicineTile(medicine: results[index]),
-    );
-  }
-}
-
-class _MedicineTile extends StatelessWidget {
-  const _MedicineTile({required this.medicine});
-
-  final Medicine medicine;
-
-  @override
-  Widget build(BuildContext context) {
-    final meta = [
-      medicine.strength,
-      medicine.dosageForm,
-    ].where((line) => line != null && line.isNotEmpty).join(' • ');
-
-    return Card(
-      child: ListTile(
-        leading: const CircleAvatar(
-          backgroundColor: AppColors.lightGreen,
-          foregroundColor: AppColors.primaryGreen,
-          child: Icon(Icons.medication_outlined),
-        ),
-        title: Text(
-          medicine.brandName,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (medicine.genericName != null &&
-                medicine.genericName!.isNotEmpty)
-              Text(
-                medicine.genericName!,
-                style: const TextStyle(color: AppColors.primaryBlue),
-              ),
-            if (meta.isNotEmpty)
-              Text(meta, style: const TextStyle(fontSize: 12)),
-          ],
-        ),
-        isThreeLine: meta.isNotEmpty &&
-            (medicine.genericName?.isNotEmpty ?? false),
-      ),
-    );
-  }
-}
-
-class _MessagePlaceholder extends StatelessWidget {
-  const _MessagePlaceholder({
-    required this.icon,
-    required this.message,
-    this.trailing,
-  });
-
-  final IconData icon;
-  final String message;
-  final Widget? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: AppColors.border),
-          const SizedBox(height: 12),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.textSecondary),
-          ),
-          if (trailing != null) ...[
-            const SizedBox(height: 4),
-            trailing!,
-          ],
-        ],
-      ),
+      itemBuilder: (context, index) => MedicineTile(medicine: results[index]),
     );
   }
 }
