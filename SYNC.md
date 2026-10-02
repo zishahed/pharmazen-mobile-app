@@ -338,3 +338,27 @@ live website.
 3. **Generic CRUD deletion semantics.** Phase 3 needs the same 1A/1B treatment: a soft
    `isDeleted` on `generics` plus filters on the app's generic read paths, otherwise
    medicines keep resolving to hidden generics.
+
+
+Notes worth carrying forward
+- description was never 3 fields — it's 4 (generic | form | strength | manufacturer), confirmed against Neon. SYNC.md's premise for the pre-flight is wrong on that point, though the conclusion (abandoned migration) held.
+- Open item #1 resolved: package_size is NULL for 7,779 asset rows so nullable was correct; type is 100% populated now. Both kept nullable, which is safe either way.
+- Open item #2 satisfied: the backfill never writes description, so website search is untouched.
+- The backfill is slow (~30 min for 21k rows — 500-statement round-trips). If you ever need to re-run it, expect that; a prisma.$executeRaw bulk UPDATE ... FROM (VALUES ...) would be far faster. Worth doing if Phase 1B needs another full pass.
+- BACKEND-ARCHITECTURE.md is now stale: it documents the 9 separate PrismaClients and lists the payments.controller.js leak as an open issue that this commit fixes.
+- Phase 1A is live and verified (commit a5ca612): 21,715 medicines loading, max-price 996.74, 1663 genericNames / 226 companies, 359 categories — all identical pre- and post-deploy.
+
+Phase 4 — Flutter local schema: done, uncommitted
+- `tool/phase4_asset_migration.sql` migrated the asset: 4 columns on `medicines`, `sync_state` seeded, `database_version` 1.0 -> 2.0, `PRAGMA user_version` 2, VACUUMed 17.8MB -> 17.1MB. `integrity_check` ok, 21,715 rows, 0 tombstones.
+- `app_database.dart`: version-gated re-seed + `ensureSchema()`, both `CREATE TABLE IF NOT EXISTS` and column-guarded `ALTER TABLE`, applied in one transaction and only when something is actually missing.
+- `test/app_database_test.dart` adds 24 tests; full suite 38 green.
+
+Phase 4 gotchas worth remembering
+- `app_metadata.database_version` is `'1.0'`, not `'1'`. `int.parse` throws on it and the gate would re-seed forever; `parseSchemaVersion` takes the leading integer instead.
+- **Drift rewrites `PRAGMA user_version = schemaVersion` on every open, in both directions.** The version-gate probe must therefore declare `schemaVersion => kBundledSchemaVersion`, or every launch silently downgrades the installed file's `user_version`. `app_metadata.database_version` is the real gate, not the pragma.
+- A bare `QueryExecutor` rejects statements until the delegating wrapper opens it; reading metadata through `AppDatabase` would instead run `ensureSchema` and make a stale file look current. Hence `_MetadataOnly`.
+- `customStatement` takes raw Dart values; `customSelect` takes `Variable`s. `Variable<T extends Object>` cannot carry a null, so `writeSyncState` emits a literal `NULL`.
+- With `allTables => []`, bumping `schemaVersion` makes drift throw `MissingSchemaError` on any version mismatch — hence the no-op `onUpgrade`.
+- Tests must not open the tracked asset directly; `withAssetCopy` copies it. Verified the asset md5 is unchanged across a full run.
+- Re-seeding is only safe while this file holds catalog data plus sync bookkeeping. Once Phase 5 adds a local order queue (e.g. `app_metadata.last_pushed_order_id`), a future `kBundledSchemaVersion` bump will wipe unpushed state — preserve `app_metadata` across the copy or gate the bump.
+- Still to do later: `journal_mode` is `delete`, so Phase 5 must enable WAL, and `discardCatalog` now clears the `-wal`/`-shm` sidecars so that swap is safe.
