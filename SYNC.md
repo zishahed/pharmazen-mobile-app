@@ -778,3 +778,113 @@ asset and watching the test fail.
 ### Verification
 
 flutter analyze clean, 80 tests passing (13 new). Not yet committed.
+
+## Phase 8 log
+
+The first authenticated write in the app. Reading the endpoints before writing the UI changed
+the shape of the work twice, and one test caught a bug that would have shipped.
+
+### Dio has no cookie jar, so the refresh token was unreachable
+
+The backend issues the refresh token as an httpOnly cookie and never in the response body —
+correct for a browser, wrong for Dart, which has nowhere to put it. Dio does not persist
+cookies on its own: without a jar, `POST /api/auth/refresh` finds no credential, every 15
+minutes the session dies mid-request, and the app bounces to login for no visible reason.
+
+This is the same class of defect that produced the website's 401s, and it was designed in
+rather than discovered later: `PersistCookieJar` sits behind `CookieManager` on both the main
+and the refresh Dio. The refresh call runs on a *separate* Dio with no auth interceptor, so a
+401 from refresh itself cannot recurse into another refresh.
+
+Concurrent refreshes are collapsed into one in-flight future. Rotation is the reason: a
+second parallel refresh would try to redeem a token the first had already rotated away, and
+log the user out for it.
+
+### This is a medication request, not a file drop
+
+`POST /api/prescriptions` requires `medicineId`, `startDate` and `endDate` alongside the
+files — a pharmacist reviews the medicine against the script, so the pair is the unit. The
+form is medicine → date window → attachment, not a camera button.
+
+Two consequences that are easy to get wrong:
+
+* `medicineId` is a `@db.Uuid`. The local catalogue is integer-keyed, so the app cannot send
+  `brand_id`. `remote_id` is the Neon UUID (already synced), but `Medicine` never exposed it —
+  added to the model and to all four `SELECT` lists in `medicine_repository.dart`. A medicine
+  with no `remote_id` is refused with "run a sync", rather than sending an id the server
+  cannot resolve.
+* `startDate`/`endDate` are `@db.Date`. They are sent as `YYYY-MM-DD`, not timestamps, so a
+  user west of UTC does not get the course start shifted by a day.
+
+### The test caught the same bug I had criticised on the website
+
+The first `prepare()` stepped JPEG quality down to 40 and then threw
+"still too large after compression". A noise-image fixture — dense, detail-heavy, the shape
+of a real camera-roll photo — proved that path fails, so precisely the files this feature
+exists for would have been rejected.
+
+Compression now shrinks geometrically when quality bottoms out (2000px → ~630px over four
+passes). A prescription is legible at 1200px, so trading resolution for an accepted upload is
+the right trade, and it is the opposite of the website's "reject anything over 2MB".
+
+Compression runs *before* the size check, never after, which is why the 2MB limit is a check
+on the encode rather than a gate on selection.
+
+### Three packages moved under me
+
+* `flutter_secure_storage` 11 dropped `encryptedSharedPreferences`; AES-GCM storage with an
+  RSA key cipher is now the default, and `resetOnError` handles a corrupt entry.
+* `image_picker` 1.2 removed `pickFile`/`FileType`, and `pickMedia` cannot filter by media
+  type — so PDFs come from `file_selector` instead.
+* `dio` 5.11 types `contentType` as `DioMediaType`, not `String`.
+
+So six packages were added, not the three planned: `image_picker`, `image`,
+`flutter_secure_storage`, `dio_cookie_manager`, `cookie_jar`, `file_selector`.
+
+### The gate sits in `MaterialApp.builder`, and that has a cost
+
+`appRouter` is a global with no `ref`, so a `redirect` cannot watch auth without a
+`refreshListenable` bridge — more machinery than one condition deserves. The gate is a
+`builder` that returns the login screen or the router's child.
+
+Because the signed-out branch *replaces* the Navigator, there is no Overlay for a `Tooltip` to
+render into, and the password-visibility button threw on first pump. It uses `Semantics` now,
+which is the better fit for a screen-reader label anyway.
+
+`AuthUnknown` is a distinct third state from `AuthSignedOut`: waiting for `restoreSession`
+avoids flashing the login form on every cold start.
+
+### Errors arrive under two different keys
+
+The auth controller answers `{ message }`; the prescriptions controller answers `{ error }`.
+Both are read, so the server's own wording reaches the UI instead of a generic string.
+
+Note the auth controller returns **401 for every login failure**, including a genuine server
+fault. Rendering that as "wrong password" would blame the user for an outage.
+
+### Two deliberate departures from the plan above
+
+* The screen searches **all** medicines, not only `is_sensitive = 1`. The endpoint does not
+  restrict which medicines may carry a prescription, and a user legitimately needs to attach a
+  script for a medicine they already order. Gating the picker to restricted medicines would
+  block valid uploads.
+* The planned `connectivity_plus` gate is **not** wired. Without it the failure surfaces as an
+  upload error, which is worse but not wrong; it is the first thing to add.
+
+### Not verified
+
+No request has been sent to the live API. Response shapes and status codes were read from
+backend source, not observed, so a wrong assumption here is entirely possible. Untested:
+
+* the real multipart round trip, including Cloudinary accepting the compressed bytes;
+* cookie persistence across an app restart, and refresh-on-401 in practice;
+* **two-file uploads.** Two 1.8MB encodes plus multipart overhead is ~3.6MB against the ~4.5MB
+  Vercel ceiling — probably fine, genuinely untested, and the first thing to check.
+
+### Verification
+
+`flutter analyze` clean, 92 tests passing (12 new: 11 covering compression and DTO parsing, 1
+covering the signed-out gate). `flutter build apk --debug` succeeds. Not yet committed.
+
+The unrelated `browse_screen.dart` work and `test/browse_screen_test.dart` remain uncommitted
+and untouched.

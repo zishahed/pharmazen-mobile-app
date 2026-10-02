@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/repositories/medicine_repository.dart';
+import '../prescription/prescription_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,7 +19,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: _navIndex == 0 ? _buildHome(context) : _buildPlaceholder(context),
+        child: switch (_navIndex) {
+          0 => _buildHome(context),
+          3 => const PrescriptionScreen(),
+          _ => _buildPlaceholder(context),
+        },
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _navIndex,
