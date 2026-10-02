@@ -319,10 +319,11 @@ into a request loop either.
 - ~~Add `<uses-permission android:name="android.permission.INTERNET"/>` to
   `android/app/src/main/AndroidManifest.xml`.~~ Done in Phase 5 — release builds are the
   only ones that lacked it, since the debug and profile manifests already declare it.
-- Guard deletions: only tombstone after a *complete* manifest whose row count is within
-  ~20% of `last_manifest_count`.
-- Never bulk-delete. Tombstone individually.
-- Handle `isFullResync` by wiping sync state and rebuilding from scratch.
+- ~~Guard deletions: only tombstone after a *complete* manifest whose row count is within
+  ~20% of `last_manifest_count`.~~ Done — `SyncDriftReport.isManifestTrustworthy`.
+- ~~Never bulk-delete. Tombstone individually.~~ Done — `SyncApplier.tombstoneMissingLocally`.
+- ~~Handle `isFullResync` by wiping sync state and rebuilding from scratch.~~ Done, and it
+  was **wrong as written** — see the phase log below.
 - Stub `generics` rows have NULL `indication`, and `allValues` uses
   `SELECT DISTINCT ... WHERE column IS NOT NULL` (`medicine_repository.dart:60-65`), so they
   stay out of indication browse. But `app_metadata.descriptions_count` drifts — nothing
@@ -454,3 +455,128 @@ Open item #3 is now only half closed — and the remaining half is on the client
 - Done server-side: generics have admin CRUD, a soft delete, a restore, and the read paths filter `isDeleted`. `sync.service.js:158-168` stays deliberately **unfiltered**, mirroring the medicine tombstone argument: the flag is the change signal, it rides to the device inside `GENERIC_SELECT`/`toGenericDto`, and `isDeleted` is the last field of `computeGenericHash`.
 - **Still open, and it means a soft-deleted generic is currently invisible to devices.** The local `generics` table has no `is_deleted` column — only `medicines` got one in `tool/phase4_asset_migration.sql` — so `GenericResolver._upsert` has nowhere to write the flag and drops it. And `resolveId` selects from `generics` with no tombstone filter in either of its two lookups. So this phase's stated goal is not yet observable on a phone: deleting a generic hides it from the admin list and from nothing else.
 - Deferred on purpose (agreed): doing it properly means adding `is_deleted` to the local `generics` table, bumping the bundled schema version and migrating the tracked asset, writing the flag in `_upsert`, and filtering it in `resolveId`. The Phase 4 notes warn that a bundled-schema-version bump can wipe `app_metadata`, so that deserves its own phase rather than riding along with admin CRUD.
+
+---
+
+## Phase 6 log
+
+The drift check that Phase 5 deliberately left unwired is now wired, and turning it on
+exposed a bug in the full-resync path that had never been exercised.
+
+### The `isFullResync` path duplicated the entire catalogue
+
+`SyncApplier.resetForFullResync` nulled `remote_id` and `content_hash` on every row before
+the replay. That is exactly what makes `applyMedicines` take its INSERT branch: `knownRowsExist`
+is false when no row carries a `remote_id`, so every replayed row is treated as new. A
+retention-cutoff resync of the 21,715-row catalogue would have left 21,715 bundled rows beside
+21,715 freshly inserted ones.
+
+Confirmed rather than reasoned about: a throwaway test asserted one row after
+`resetForFullResync()` plus a replay of the same row, and got two. The pre-existing test
+`full resync clears only the sync bookkeeping` did not catch it because its replay sent a
+*different* `remoteId` — which inserts either way — so the count came out at 3 under both the
+old and the new behaviour.
+
+The fix is to keep `remote_id` and `content_hash` and clear only `sync_state.last_success_at`,
+which is what actually drives a `?since=` delta. A full resync then becomes "rewrite the rows
+that differ": the hash comparison in `applyMedicines` skips everything already correct, so a
+healthy catalogue pays 48 pages and zero writes. The old test name is now wrong and says so.
+
+`last_manifest_count` and `bundled_schema_version` survive too. The first describes the
+server's catalogue size, which a client-side replay does not change, and the second gates
+re-seeding rather than fetching.
+
+### A mismatched row cannot be repaired by clearing its hash
+
+`mismatched` rows are present on both sides with different content. The obvious repair —
+null `content_hash` so the next sync rewrites the row — does not work, because the delta is
+driven by `updatedAt > since`, not by hash. A row whose server `updatedAt` is already at or
+before our cursor is simply never sent again, so it stays wrong for the life of the install.
+
+Repair therefore drops the cursor instead, which replays the catalogue. Combined with hashes
+being preserved, the replay rewrites exactly the drifted rows and skips the rest. Agreed with
+the user as the repair policy for this phase.
+
+### The guard
+
+`isManifestTrustworthy` is what gates every tombstone, and it rejects:
+
+- an empty body that is not a `304` — the catalogue came back with nothing in it;
+- a manifest with no established baseline. The first check records `last_manifest_count` and
+  stops. Tombstoning against a manifest nothing has vouched for would make the very first
+  check the riskiest one;
+- a body more than `ApiConfig.manifestRowTolerance` (20%) away from the baseline. The
+  boundary is inclusive: exactly 20% lost is catalogue churn, not truncation.
+
+A `304` short-circuits in `verifyAgainstManifest` *before* any comparison. Without that, an
+empty body reads as "the server has no rows", every local row is flagged, and
+`isManifestTrustworthy` returns true for a 304 — the one path that would have tombstoned the
+whole catalogue.
+
+The reference for the tolerance is the previous accepted count, not the local count. The local
+count is precisely what a truncated manifest would corrupt.
+
+### Already-tombstoned rows are excluded from the report
+
+A row tombstoned by an earlier check is absent from the manifest on every subsequent run, so
+counting it again would grow `missingLocally` forever and retry work that already landed. The
+report skips rows where `is_deleted != 0`, which also makes repair idempotent.
+
+### Cadence
+
+`last_manifest_at` is a new `sync_state` key checked against
+`ApiConfig.manifestInterval` (24h) after each successful delta. It is deliberately **not**
+keyed off `last_success_at`: that is in server time and jumps backwards on clock skew, while
+the manifest interval is a client-side pacing decision. A `304` refreshes the timestamp but
+leaves `last_manifest_count` alone, since a response with no rows says nothing about how many
+there are.
+
+Adding the key needed no schema-version bump. `ensureSchema` already inserts any
+`sync_state` key missing from an installed file, and the bundled asset is unchanged — the
+file gains a row, not a column. Pinned by
+`ensureSchema adds a newly introduced key to an already-installed catalog`, which also asserts
+the pre-existing keys survive intact, since a clobbered `last_success_at` would resend the
+whole catalogue.
+
+The repair runs after `_writeCursor`, so it compares the catalogue the delta just finished
+updating, and inside a `try` that swallows everything: the delta's work is already durable
+and correct, so a repair failure must not be reported as a failed sync.
+
+### Test fixture change
+
+`_FakeAdapter` routes `/sync/manifest` by path instead of drawing from its ordered response
+list. Without that, the engine's daily check consumed the next delta page and four unrelated
+tests broke on request counts. `deltaRequests` filters the manifest out for sync-paging
+assertions.
+
+### The bundled asset shipped one key behind, and a test could not have noticed
+
+Adding `last_manifest_at` to `kSyncStateKeys` left `assets/database/medicines.db` — which
+is a tracked binary generated by `tool/phase4_asset_migration.sql` — still carrying only the
+old three keys. That is worse than a stale artefact, because it turns opening the asset into
+a write: `AppDatabase.ensureSchema` runs in `beforeOpen` on every connection, sees the key
+missing, and inserts it. Any test opening the asset through `AppDatabase` — `browse_screen_test`
+and `medicine_repository_test` both did — therefore rewrote the shipped 17MB file, and
+`git status` showed a modified binary after a test run.
+
+It stayed latent until now only because the asset happened to be exactly in step with
+`kSyncStateKeys`. The rule is that every key in `kSyncStateKeys` must appear in the migration
+script; a key that exists only in Dart makes every asset open a write.
+
+Fixed at the source rather than papered over in the tests: the migration script now seeds
+`last_manifest_at`, and the asset carries it. Adding the key is a single-row `INSERT OR IGNORE`
+— `medicines` (21,715 rows), `generics`, `app_metadata`, `user_version` and
+`PRAGMA integrity_check` are all unchanged, so no schema-version bump is involved and
+`app_metadata` is untouched. `medicine_repository_test` was also moved onto a temp copy.
+
+The test that should have caught this could not. `ships sync_state seeded with the expected
+keys` opened the asset through `withAssetCopy`, which wraps it in an `AppDatabase` — so
+`ensureSchema` inserted the missing key *before* the assertion ran, and the test passed
+against an asset that genuinely lacked it. Both `bundled asset` tests now go through
+`withUnmigratedAssetCopy`, which opens a copy through `_FixtureDatabase` and so has no
+`beforeOpen` hook to repair the file first. Verified by deleting `last_manifest_at` from the
+asset and watching the test fail.
+
+### Verification
+
+flutter analyze clean, 80 tests passing (13 new). Not yet committed.

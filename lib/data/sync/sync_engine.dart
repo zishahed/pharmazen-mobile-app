@@ -156,6 +156,19 @@ class SyncEngine {
       // Reached only after every page committed.
       await _writeCursor(_resolveCursor(since, serverTime, newestUpdatedAt));
 
+      // Repair runs after the cursor lands so it is comparing the catalogue the
+      // delta just finished updating. A failure here leaves the cursor intact and
+      // the next run repeats, so it must not be able to fail the sync itself —
+      // the delta's work is already durable and correct.
+      if (!sawFullResync && await isManifestCheckDue()) {
+        try {
+          await repairFromManifest();
+        } on Object {
+          // Deliberately swallowed: an unhandled throw here would be reported as
+          // a failed sync, which would be a lie.
+        }
+      }
+
       return SyncOutcome(
         status: sawFullResync ? SyncStatus.fullResync : SyncStatus.success,
         trigger: trigger,
@@ -237,12 +250,30 @@ class SyncEngine {
   /// Compares the local catalog against `GET /api/sync/manifest` and reports what
   /// differs, without changing anything.
   ///
-  /// Deliberately not wired into the automatic path: a full manifest is a
-  /// ~21.7k-row payload, and Phase 2 does not exist yet. Phase 6 adds the
-  /// ~20% row-count sanity check before this is allowed to tombstone anything.
+  /// A `304 Not Modified` short-circuits before any comparison: an empty body
+  /// would otherwise read as "the server has no rows" and flag every local row
+  /// for deletion.
   Future<SyncDriftReport> verifyAgainstManifest() async {
     final manifest = await client.fetchManifest();
-    final remote = {for (final entry in manifest.entries) entry.remoteId: entry.contentHash};
+    final baseline = int.tryParse((await db.readSyncState('last_manifest_count')) ?? '');
+
+    if (manifest.notModified) {
+      return const SyncDriftReport(
+        remoteCount: 0,
+        localCount: 0,
+        missingLocally: 0,
+        missingRemotely: 0,
+        mismatched: 0,
+        manifestNotModified: true,
+        lastManifestCount: null,
+        missingLocallyIds: [],
+        mismatchedIds: [],
+      );
+    }
+
+    final remote = {
+      for (final entry in manifest.entries) entry.remoteId: entry.contentHash,
+    };
 
     final local = (await db.customSelect('''
       SELECT remote_id, content_hash, is_deleted
@@ -250,36 +281,122 @@ class SyncEngine {
       WHERE remote_id IS NOT NULL
     ''').get());
 
-    var missingLocally = 0;
     var mismatched = 0;
-    final localHashes = <String, String>{};
+    final missingLocallyIds = <String>[];
+    final mismatchedIds = <String>[];
+    final localIds = <String>{};
 
     for (final row in local) {
       final remoteId = row.data['remote_id'] as String;
       final localHash = row.data['content_hash'] as String?;
-      localHashes[remoteId] = localHash ?? '';
+      final isDeleted = (row.data['is_deleted'] as int?) ?? 0;
+      localIds.add(remoteId);
 
       final remoteHash = remote[remoteId];
       if (remoteHash == null) {
         // Locally known, absent from the manifest: the server has deleted it
-        // outright, which a cursor can never report.
-        missingLocally++;
+        // outright, which a cursor can never report. A row already tombstoned by
+        // an earlier check is excluded, otherwise the count would climb forever
+        // and every run would retry work that already landed.
+        if (isDeleted == 0) missingLocallyIds.add(remoteId);
       } else if (localHash != null && localHash != remoteHash) {
         mismatched++;
+        mismatchedIds.add(remoteId);
       }
     }
 
-    final missingRemotely =
-        remote.keys.where((id) => !localHashes.containsKey(id)).length;
+    final missingRemotely = remote.keys.where((id) => !localIds.contains(id)).length;
 
     return SyncDriftReport(
       remoteCount: remote.length,
-      localCount: localHashes.length,
-      missingLocally: missingLocally,
+      localCount: localIds.length,
+      missingLocally: missingLocallyIds.length,
       missingRemotely: missingRemotely,
       mismatched: mismatched,
-      manifestNotModified: manifest.notModified,
+      manifestNotModified: false,
+      lastManifestCount: baseline,
+      missingLocallyIds: missingLocallyIds,
+      mismatchedIds: mismatchedIds,
     );
+  }
+
+  /// Whether the daily drift check should run after the delta that just landed.
+  ///
+  /// Skipped for a full resync: that already replayed the entire catalogue
+  /// against the server, so the manifest would only confirm what it did.
+  Future<bool> isManifestCheckDue() async {
+    final raw = await db.readSyncState('last_manifest_at');
+    if (raw == null || raw.isEmpty) return true;
+    final last = DateTime.tryParse(raw);
+    if (last == null) return true;
+    return _clock().difference(last) >= ApiConfig.manifestInterval;
+  }
+
+  /// Repairs the drift a `?since=` delta cannot express.
+  ///
+  /// Two distinct failures, two distinct repairs:
+  ///
+  /// * A row the server hard-deleted. No timestamp will ever change again, so it
+  ///   can never appear in a delta. It is tombstoned individually — never
+  ///   deleted, and never in a bulk statement, because the manifest is the only
+  ///   evidence and a bad response would otherwise wipe live rows.
+  /// * A row whose content disagrees with the manifest. Its server `updatedAt`
+  ///   is already at or before our cursor, so the next delta will skip it and it
+  ///   stays wrong forever. Clearing `content_hash` does not help: the delta is
+  ///   driven by timestamps, not hashes. Dropping the cursor instead replays the
+  ///   catalogue, and because [SyncApplier.resetForFullResync] keeps the hashes,
+  ///   the replay rewrites exactly these rows and skips the rest.
+  ///
+  /// Returns without touching the catalog when the manifest is not trustworthy —
+  /// see [SyncDriftReport.isManifestTrustworthy].
+  Future<SyncDriftReport> repairFromManifest() async {
+    final report = await verifyAgainstManifest();
+
+    if (report.manifestNotModified) {
+      // No body means no new count, but the check itself succeeded and the
+      // timestamp must advance or this would re-fire on every sync.
+      await _stampManifestCheck(remoteCount: null);
+      return report;
+    }
+
+    // First ever check: record the baseline and stop. Tombstoning against a
+    // manifest nothing has ever vouched for would make the very first check the
+    // riskiest one.
+    if (!report.hasBaseline) {
+      if (report.remoteCount > 0) {
+        await _stampManifestCheck(remoteCount: report.remoteCount);
+      }
+      return report;
+    }
+
+    if (!report.isManifestTrustworthy) return report;
+
+    final tombstoned = await _applier.tombstoneMissingLocally(report.missingLocallyIds);
+    if (tombstoned != report.missingLocally) {
+      throw StateError(
+        'Tombstoned $tombstoned of ${report.missingLocally} rows the manifest '
+        'no longer lists.',
+      );
+    }
+
+    if (report.mismatchedIds.isNotEmpty) await _applier.resetForFullResync();
+
+    await _stampManifestCheck(remoteCount: report.remoteCount);
+    return report;
+  }
+
+  /// Records that a check completed, so the next one waits out
+  /// [ApiConfig.manifestInterval].
+  ///
+  /// [remoteCount] is null for a `304`, which leaves the stored baseline
+  /// untouched — a response that carries no rows says nothing about their number.
+  Future<void> _stampManifestCheck({required int? remoteCount}) async {
+    await db.transaction(() async {
+      if (remoteCount != null) {
+        await db.writeSyncState('last_manifest_count', '$remoteCount');
+      }
+      await db.writeSyncState('last_manifest_at', _clock().toUtc().toIso8601String());
+    });
   }
 }
 
@@ -292,7 +409,16 @@ class SyncDriftReport {
     required this.missingRemotely,
     required this.mismatched,
     required this.manifestNotModified,
+    required this.lastManifestCount,
+    required this.missingLocallyIds,
+    required this.mismatchedIds,
   });
+
+  /// Number of rows in the accepted manifest at the previous check, or null when
+  /// no baseline has been recorded yet. This — not the local count — is the
+  /// reference the tolerance is measured against: the local count is exactly what
+  /// a truncated manifest would make it wrong.
+  final int? lastManifestCount;
 
   final int remoteCount;
   final int localCount;
@@ -308,16 +434,44 @@ class SyncDriftReport {
 
   final bool manifestNotModified;
 
+  /// The `remote_id`s behind [missingLocally] and [mismatched], so repair writes
+  /// the exact rows that were compared rather than re-deriving them from a second
+  /// query that could disagree.
+  final List<String> missingLocallyIds;
+  final List<String> mismatchedIds;
+
   bool get isClean => missingLocally == 0 && missingRemotely == 0 && mismatched == 0;
 
-  /// Phase 6's tombstone guard: refuse to act on a manifest whose size is wildly
-  /// different from the last known good, which would otherwise mean a truncated
-  /// or errored response.
-  bool get looksTruncated => remoteCount == 0 || localCount == 0;
+  /// True once a manifest count has been recorded, so a size change has something
+  /// to be measured against.
+  bool get hasBaseline => (lastManifestCount ?? 0) > 0;
+
+  /// How far the manifest's size differs from the baseline, as a fraction.
+  /// Null when there is no baseline to measure against.
+  double? get sizeDeviation {
+    final baseline = lastManifestCount;
+    if (baseline == null || baseline <= 0) return null;
+    return (remoteCount - baseline).abs() / baseline;
+  }
+
+  /// Whether this manifest may be acted on.
+  ///
+  /// The failure mode being guarded against is one-directional: an incomplete or
+  /// truncated body makes every row it happens to omit look deleted, and acting on
+  /// that tombstones live catalogue rows. There is no delta that would bring them
+  /// back, because a hard delete is invisible to `?since=`.
+  bool get isManifestTrustworthy {
+    if (manifestNotModified) return true;
+    // An empty body with no 304 means the catalogue came back with nothing in it.
+    if (remoteCount == 0) return false;
+    if (!hasBaseline) return false;
+    return sizeDeviation! <= ApiConfig.manifestRowTolerance;
+  }
 
   @override
   String toString() =>
       'SyncDriftReport(remote: $remoteCount, local: $localCount, '
       'missingLocally: $missingLocally, missingRemotely: $missingRemotely, '
-      'mismatched: $mismatched)';
+      'mismatched: $mismatched, baseline: $lastManifestCount, '
+      'trustworthy: $isManifestTrustworthy)';
 }

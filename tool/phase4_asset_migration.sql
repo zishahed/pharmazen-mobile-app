@@ -23,6 +23,12 @@ BEGIN IMMEDIATE;
 -- commits, so a crash mid-sync leaves the cursor untouched and the run repeats
 -- safely. Both columns are nullable precisely so that "never synced" and
 -- "synced, count unknown" are both representable without a sentinel.
+--
+-- Every key in kSyncStateKeys (app_database.dart) must appear here. A key that
+-- only exists in Dart leaves the bundled asset behind kSyncStateKeys, and
+-- AppDatabase.ensureSchema then writes to the shipped file on every open --
+-- including when a test opens it directly, which shows up as a modified 17MB
+-- binary in git status.
 CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT,
@@ -35,6 +41,9 @@ INSERT OR IGNORE INTO sync_state (key, value, updated_at)
   VALUES ('last_success_at', NULL, CURRENT_TIMESTAMP);
 INSERT OR IGNORE INTO sync_state (key, value, updated_at)
   VALUES ('last_manifest_count', NULL, CURRENT_TIMESTAMP);
+-- Phase 6: when the daily drift check last ran. NULL until then.
+INSERT OR IGNORE INTO sync_state (key, value, updated_at)
+  VALUES ('last_manifest_at', NULL, CURRENT_TIMESTAMP);
 
 -- Local identity bridge + change detection for Phase 2/3.
 --   remote_id      server-side Medicine.id (uuid); the sync upsert key

@@ -44,6 +44,26 @@ class ApiConfig {
   /// between wifi and mobile fires many events in a couple of seconds.
   static const Duration connectivityDebounce = Duration(seconds: 3);
 
+  /// Floor between manifest drift checks.
+  ///
+  /// Far longer than [minSyncInterval] because the manifest is the whole
+  /// catalogue in one response — roughly 1MB for the 21.7k live rows — while a
+  /// delta is only the rows that changed. Once a day bounds the worst case
+  /// without letting a hard-deleted row stay visible for a week. An unchanged
+  /// catalogue answers `304 Not Modified`, so an untouched check costs no body
+  /// at all.
+  static const Duration manifestInterval = Duration(hours: 24);
+
+  /// How far the manifest's row count may drift from the last accepted count
+  /// before the manifest is rejected as truncated.
+  ///
+  /// The manifest is the only thing standing between a bad response and
+  /// tombstoning rows the server still has, and the failure mode is
+  /// one-directional: a truncated body silently deletes live catalogue rows.
+  /// 20% comfortably absorbs normal catalogue growth while catching a response
+  /// that lost most of its payload.
+  static const double manifestRowTolerance = 0.2;
+
   static String get apiBaseUrl {
     final value = apiBaseUrlOverride.trim();
     if (value.isEmpty) {

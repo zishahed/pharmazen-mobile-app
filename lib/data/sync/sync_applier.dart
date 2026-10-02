@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:drift/drift.dart';
 
 import '../../core/config/api_config.dart';
@@ -203,20 +205,67 @@ class SyncApplier {
     return next < 0 ? 0 : next;
   }
 
-  /// Removes every trace of server-assigned sync state so a full resync starts
-  /// from the bundled asset's content rather than layering deltas on stale rows.
+  /// Tombstones rows the manifest no longer lists, and returns how many changed.
   ///
-  /// `brand_id`, `brand_name` and the catalogue columns are deliberately kept:
+  /// One `UPDATE` per row, never `DELETE` and never a multi-row `IN (...)`. That
+  /// is the whole safety property of this phase: the manifest is a single
+  /// response whose failure is silent, and a bulk statement would propagate a
+  /// truncated body across the catalogue in a single statement. Per-row
+  /// statements keep the work interruptible and make the blast radius of a bad
+  /// manifest exactly the rows it actually named.
+  ///
+  /// `remote_id` and `content_hash` are left in place so an already-tombstoned
+  /// row stays recognisable as the same server row, and `is_deleted = 0` makes
+  /// the write idempotent.
+  Future<int> tombstoneMissingLocally(List<String> remoteIds) async {
+    if (remoteIds.isEmpty) return 0;
+
+    var tombstoned = 0;
+    for (var offset = 0; offset < remoteIds.length; offset += ApiConfig.applyBatchSize) {
+      final end = min(offset + ApiConfig.applyBatchSize, remoteIds.length);
+      final batch = remoteIds.sublist(offset, end);
+
+      await _db.transaction(() async {
+        for (final remoteId in batch) {
+          final changed = await _db.customUpdate(
+            '''
+              UPDATE medicines
+              SET is_deleted = 1, synced_at = CURRENT_TIMESTAMP
+              WHERE remote_id = ? AND is_deleted = 0
+            ''',
+            variables: [Variable.withString(remoteId)],
+          );
+          tombstoned += changed;
+        }
+      });
+    }
+
+    return tombstoned;
+  }
+
+  /// Resets the fetch cursor so the next sync replays the whole catalogue.
+  ///
   /// `sync_state.last_success_at` drives which rows a `?since=` delta returns, so
-  /// wiping it alone would not re-fetch anything, and discarding the bundled
-  /// names would leave a gap until the server caught up.
+  /// clearing it alone is what makes the server resend everything. `brand_id`,
+  /// `brand_name` and the catalogue columns are deliberately kept: the
+  /// synchronous replay overwrites them, and discarding the bundled names would
+  /// leave a gap until the server caught up.
+  ///
+  /// `medicines.remote_id` and `content_hash` are kept for a different reason.
+  /// `applyMedicines` matches on `remote_id` and skips rows whose hash already
+  /// matches, so preserving them turns a full resync into "rewrite the rows that
+  /// actually differ" — which for a healthy catalogue means no writes at all.
+  /// Nulling them instead makes every replayed row look new and hit the INSERT
+  /// branch, so a genuine resync would duplicate the entire catalogue, leaving
+  /// the 21.7k bundled rows alongside 21.7k freshly inserted ones.
+  ///
+  /// `last_manifest_count` also survives: it describes the server's catalogue
+  /// size, which a client-side replay does not change, and clearing it would
+  /// discard the baseline the next drift check needs. `bundled_schema_version`
+  /// survives for the same reason — it gates re-seeding, not fetching.
   Future<void> resetForFullResync() async {
     await _db.transaction(() async {
-      await _db.customStatement(
-        'UPDATE medicines SET remote_id = NULL, content_hash = NULL, '
-        'synced_at = NULL, is_deleted = 0',
-      );
-      await _db.customStatement('DELETE FROM sync_state');
+      await _db.writeSyncState('last_success_at', null);
     });
   }
 }

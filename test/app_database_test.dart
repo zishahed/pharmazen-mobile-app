@@ -35,7 +35,8 @@ void main() {
 
   group('bundled asset', () {
     test('ships the Phase 4 columns on medicines', () async {
-      await withAssetCopy((db, _) async {
+      // Unmigrated on purpose: see withUnmigratedAssetCopy.
+      await withUnmigratedAssetCopy((db) async {
         final columns = await _columns(db, 'medicines');
         expect(
           columns.keys.toSet(),
@@ -51,27 +52,39 @@ void main() {
     });
 
     test('ships sync_state seeded with the expected keys', () async {
-      await withAssetCopy((db, _) async {
+      // Unmigrated on purpose. This test is the guard against a key being added
+      // to kSyncStateKeys without also being added to
+      // tool/phase4_asset_migration.sql; read through AppDatabase it could never
+      // fail, because ensureSchema would insert the missing key first.
+      await withUnmigratedAssetCopy((db) async {
         final keys = (await db.customSelect('SELECT key FROM sync_state').get())
             .map((row) => row.data['key'] as String)
             .toSet();
         expect(keys, kSyncStateKeys.toSet());
 
         expect(
-          await db.readSyncState('bundled_schema_version'),
+          await _shippedSyncState(db, 'bundled_schema_version'),
           kBundledSchemaVersion.toString(),
         );
-        expect(await db.readSyncState('last_success_at'), isNull,
-            reason: 'nothing has synced yet');
-        expect(await db.readSyncState('last_manifest_count'), isNull);
+        expect(
+          await _shippedSyncState(db, 'last_success_at'),
+          isNull,
+          reason: 'nothing has synced yet',
+        );
+        expect(await _shippedSyncState(db, 'last_manifest_count'), isNull);
+        expect(
+          await _shippedSyncState(db, 'last_manifest_at'),
+          isNull,
+          reason: 'the drift check has not run yet',
+        );
       });
     });
 
     test('is stamped at the bundled generation', () async {
       await withAssetCopy((db, _) async {
-        final rows = await db.customSelect(
-          "SELECT value FROM app_metadata WHERE key = 'database_version'",
-        ).get();
+        final rows = await db
+            .customSelect("SELECT value FROM app_metadata WHERE key = 'database_version'")
+            .get();
         expect(
           parseSchemaVersion(rows.single.data['value'] as String?),
           kBundledSchemaVersion,
@@ -107,8 +120,10 @@ void main() {
         // Inspect the starting shape through a wrapper with no migration hook:
         // opening an AppDatabase would upgrade the file immediately.
         final raw = _FixtureDatabase(NativeDatabase(file));
-        expect((await _columns(raw, 'medicines')).keys.toSet(),
-            isNot(contains('remote_id')));
+        expect(
+          (await _columns(raw, 'medicines')).keys.toSet(),
+          isNot(contains('remote_id')),
+        );
         expect(await _tableNames(raw), isNot(contains('sync_state')));
         await raw.close();
 
@@ -135,13 +150,12 @@ void main() {
         final rows = await db.customSelect('''
           SELECT value FROM app_metadata WHERE key = 'database_version'
         ''').get();
-        expect(parseSchemaVersion(rows.single.data['value'] as String?),
-            kBundledSchemaVersion);
         expect(
-          (await db.customSelect('PRAGMA user_version').getSingle())
-              .data
-              .values
-              .single,
+          parseSchemaVersion(rows.single.data['value'] as String?),
+          kBundledSchemaVersion,
+        );
+        expect(
+          (await db.customSelect('PRAGMA user_version').getSingle()).data.values.single,
           kBundledSchemaVersion,
         );
       });
@@ -176,11 +190,20 @@ void main() {
         await db.ensureSchema();
         await db.ensureSchema();
 
-        final after = (await db.customSelect(
-          "SELECT updated_at FROM app_metadata WHERE key = 'database_version'",
-        ).getSingle()).data.values.single;
-        expect(after, sentinel,
-            reason: 'ensureSchema must not re-stamp an already-current file');
+        final after =
+            (await db
+                    .customSelect(
+                      "SELECT updated_at FROM app_metadata WHERE key = 'database_version'",
+                    )
+                    .getSingle())
+                .data
+                .values
+                .single;
+        expect(
+          after,
+          sentinel,
+          reason: 'ensureSchema must not re-stamp an already-current file',
+        );
       });
     });
 
@@ -195,6 +218,36 @@ void main() {
 
         final keys = await db.customSelect('SELECT key FROM sync_state').get();
         expect(keys.map((r) => r.data['key']).toSet(), kSyncStateKeys.toSet());
+      });
+    });
+
+    test('adds a newly introduced key to an already-installed catalog', () async {
+      await withLegacyCatalog((db) async {
+        // An install that predates the key, holding values for the old ones.
+        await db.ensureSchema();
+        await db.writeSyncState('last_success_at', '2026-01-02T00:00:00Z');
+        await db.writeSyncState('last_manifest_count', '21715');
+        await db.customStatement("DELETE FROM sync_state WHERE key = 'last_manifest_at'");
+
+        await db.ensureSchema();
+
+        final keys = (await db.customSelect('SELECT key FROM sync_state').get())
+            .map((r) => r.data['key'])
+            .toSet();
+        expect(keys, kSyncStateKeys.toSet(), reason: 'the key must self-heal');
+        expect(
+          await db.readSyncState('last_manifest_at'),
+          isNull,
+          reason: 'a fabricated value would delay the first drift check by a day',
+        );
+        // The keys the install already relied on must survive untouched, or the
+        // next sync would resend the whole catalogue.
+        expect(await db.readSyncState('last_success_at'), '2026-01-02T00:00:00Z');
+        expect(await db.readSyncState('last_manifest_count'), '21715');
+        expect(
+          await db.readSyncState('bundled_schema_version'),
+          '$kBundledSchemaVersion',
+        );
       });
     });
 
@@ -237,11 +290,14 @@ void main() {
         await db.writeSyncState('last_success_at', null);
 
         expect(await db.readSyncState('last_success_at'), isNull);
-        final keys = await db.customSelect(
-          "SELECT key FROM sync_state WHERE key = 'last_success_at'",
-        ).get();
-        expect(keys, hasLength(1),
-            reason: 'null means "never synced", not "unknown key"');
+        final keys = await db
+            .customSelect("SELECT key FROM sync_state WHERE key = 'last_success_at'")
+            .get();
+        expect(
+          keys,
+          hasLength(1),
+          reason: 'null means "never synced", not "unknown key"',
+        );
       });
     });
 
@@ -256,8 +312,11 @@ void main() {
   group('version gate', () {
     test('reports the installed generation', () async {
       await withLegacyCatalogFile((file) async {
-        expect(await readInstalledSchemaVersion(file), 1,
-            reason: 'must be below kBundledSchemaVersion so the gate re-seeds');
+        expect(
+          await readInstalledSchemaVersion(file),
+          1,
+          reason: 'must be below kBundledSchemaVersion so the gate re-seeds',
+        );
       });
     });
 
@@ -293,10 +352,14 @@ void main() {
     });
 
     test('current asset is already at the bundled generation', () async {
-      final version =
-          await withAssetCopy<int?>((_, file) => readInstalledSchemaVersion(file));
-      expect(version, kBundledSchemaVersion,
-          reason: 'otherwise every fresh install re-seeds itself');
+      final version = await withAssetCopy<int?>(
+        (_, file) => readInstalledSchemaVersion(file),
+      );
+      expect(
+        version,
+        kBundledSchemaVersion,
+        reason: 'otherwise every fresh install re-seeds itself',
+      );
     });
 
     test('discardCatalog removes the database and its sidecars', () async {
@@ -311,8 +374,11 @@ void main() {
 
       expect(file.existsSync(), isFalse);
       for (final suffix in ['-wal', '-shm', '-journal']) {
-        expect(File('${file.path}$suffix').existsSync(), isFalse,
-            reason: 'a stale $suffix would corrupt the re-seeded database');
+        expect(
+          File('${file.path}$suffix').existsSync(),
+          isFalse,
+          reason: 'a stale $suffix would corrupt the re-seeded database',
+        );
       }
     });
   });
@@ -323,6 +389,36 @@ void main() {
 /// Drift rewrites `PRAGMA user_version` on every open, so tests must never point
 /// at the tracked 17MB binary directly — doing so would leave the working tree
 /// dirty after a test run.
+/// Reads a `sync_state` value straight from the file, bypassing
+/// [AppDatabase.readSyncState] so the assertion sees what was shipped.
+Future<String?> _shippedSyncState(drift.GeneratedDatabase db, String key) async {
+  final rows = await db.customSelect(
+    'SELECT value FROM sync_state WHERE key = ?',
+    variables: [drift.Variable.withString(key)],
+  ).get();
+  return rows.isEmpty ? null : rows.single.data['value'] as String?;
+}
+
+/// The bundled asset as shipped, with nothing allowed to migrate it first.
+///
+/// [withAssetCopy] wraps the copy in an [AppDatabase], whose `beforeOpen` runs
+/// `ensureSchema` — so a copy missing a `sync_state` key gets that key inserted
+/// before any assertion runs, and a test about what the asset *ships* passes no
+/// matter what it ships. This opens the copy through [_FixtureDatabase] instead,
+/// which has no `beforeOpen` hook, so the file is inspected exactly as committed.
+Future<T> withUnmigratedAssetCopy<T>(Future<T> Function(drift.GeneratedDatabase db) body) async {
+  final dir = await _tempDir();
+  final file = File('${dir.path}/medicines.db');
+  await File(_asset).copy(file.path);
+
+  final db = _FixtureDatabase(NativeDatabase(file));
+  try {
+    return await body(db);
+  } finally {
+    await db.close();
+  }
+}
+
 Future<T> withAssetCopy<T>(Future<T> Function(AppDatabase db, File file) body) async {
   final dir = await _tempDir();
   final file = File('${dir.path}/medicines.db');
@@ -338,9 +434,7 @@ Future<T> withAssetCopy<T>(Future<T> Function(AppDatabase db, File file) body) a
 
 /// Runs [body] against a freshly built pre-Phase-4 database, wrapped in an
 /// AppDatabase so ensureSchema can be driven directly.
-Future<void> withLegacyCatalog(
-  Future<void> Function(AppDatabase db) body,
-) async {
+Future<void> withLegacyCatalog(Future<void> Function(AppDatabase db) body) async {
   await withLegacyCatalogFile((file) async {
     final db = AppDatabase(NativeDatabase(file));
     try {
@@ -454,16 +548,13 @@ class _FixtureDatabase extends drift.GeneratedDatabase {
 
 Future<Map<String, String>> _columns(drift.GeneratedDatabase db, String table) async {
   final rows = await db.customSelect('PRAGMA table_info($table)').get();
-  return {
-    for (final row in rows)
-      row.data['name'] as String: row.data['type'] as String,
-  };
+  return {for (final row in rows) row.data['name'] as String: row.data['type'] as String};
 }
 
 Future<List<String>> _tableNames(drift.GeneratedDatabase db) async {
-  final rows = await db.customSelect(
-    "SELECT name FROM sqlite_master WHERE type = 'table'",
-  ).get();
+  final rows = await db
+      .customSelect("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .get();
   return rows.map((row) => row.data['name'] as String).toList();
 }
 

@@ -28,21 +28,28 @@ const Map<String, String> kMedicineSyncColumns = {
 /// Keys seeded into `sync_state`. Phase 5 advances `last_success_at` only after
 /// the final batch commits, so a crash mid-sync leaves the cursor untouched and
 /// the run repeats safely.
+///
+/// [AppDatabase.ensureSchema] adds any key missing from an installed file, so
+/// adding one here reaches existing installs without a schema-version bump: the
+/// file gains a row, not a column. The bundled asset does not need regenerating.
 const List<String> kSyncStateKeys = [
   'last_success_at',
   'last_manifest_count',
+  'last_manifest_at',
   'bundled_schema_version',
 ];
 
 /// Initial value for each `sync_state` key on a fresh install.
 ///
-/// Only `bundled_schema_version` has a real default. The other two must start
+/// Only `bundled_schema_version` has a real default. The others must start
 /// empty: a fabricated `last_success_at` would be sent as `?since=` on the very
-/// first sync, and a fabricated `last_manifest_count` would be used as the
-/// manifest-size sanity baseline, defeating the check it exists for.
+/// first sync, a fabricated `last_manifest_count` would be used as the
+/// manifest-size sanity baseline, defeating the check it exists for, and a
+/// fabricated `last_manifest_at` would delay the first drift check by a day.
 const Map<String, String?> kSyncStateDefaults = {
   'last_success_at': null,
   'last_manifest_count': null,
+  'last_manifest_at': null,
   'bundled_schema_version': '$kBundledSchemaVersion',
 };
 
