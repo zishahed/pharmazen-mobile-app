@@ -103,6 +103,9 @@ class AuthApiClient {
       throw const AuthException('The server did not return a session token.');
     }
 
+    // Before the interceptor can attach it on any later request.
+    await _api.adoptAccessToken(token);
+
     return AuthUser.fromJson(data!['user'] as Map<String, dynamic>);
   }
 

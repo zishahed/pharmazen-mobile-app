@@ -129,6 +129,17 @@ class ApiClient {
     }
   }
 
+  /// Hands a freshly issued access token to the store.
+  ///
+  /// [AuthApiClient.login] must call this. The token in the login body is the
+  /// only credential the app holds at that moment — the refresh token is a
+  /// cookie — so dropping it means [TokenStore] stays empty, [ApiClient] attaches
+  /// no `Authorization` header, and every call goes out unauthenticated until an
+  /// incidental 401 happens to trigger a refresh.
+  Future<void> adoptAccessToken(String token) async {
+    await _tokens.writeAccessToken(token);
+  }
+
   Future<void> clearSession() async {
     await _tokens.clear();
     await _cookies.deleteAll();

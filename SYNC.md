@@ -871,6 +871,38 @@ fault. Rendering that as "wrong password" would blame the user for an outage.
 * The planned `connectivity_plus` gate is **not** wired. Without it the failure surfaces as an
   upload error, which is worse but not wrong; it is the first thing to add.
 
+### The login response token was thrown away
+
+The first run of the app could not get past the sign-in screen, and the cause was mine.
+`AuthApiClient.login` received the access token, checked it was non-empty, and returned the
+user without storing it. `writeAccessToken` existed in exactly one place — inside
+`_performRefresh` — so `TokenStore` stayed empty after a perfectly good login.
+
+The consequence is not obvious from the symptom. Sign-in *succeeded*: the gate saw
+`AuthSignedIn` and let you through. It was every request afterwards that was anonymous,
+because `_onRequest` builds the `Authorization` header by reading the token back out of
+`TokenStore` and found nothing there. The app recovered only if some later call happened to
+401 and stumble into the refresh path, which is why it looked intermittent rather than
+broken.
+
+Introduced by the refactor that moved the Dio into a shared `ApiClient`: `login` used to write
+the token itself and stopped doing so when the writer became private to the other class. The
+code that lost the call is code that still compiles, still returns the right type, and still
+passes every test that was written before it — which is the whole argument for the tests
+below.
+
+The fix is `ApiClient.adoptAccessToken`, called from `login`. `auth_session_test.dart` covers
+it, and the coverage is deliberately behavioural rather than structural: it asserts the token
+is readable from the store afterwards, and that a subsequent request carries
+`Authorization: Bearer the-access-token`. Verified by reverting the one line and watching two
+of them fail, so they are not passing by accident.
+
+Worth recording: the temporary bypass offered while diagnosing this was not needed. The
+symptom pointed at "the sign in page does not connect with the server", but `curl` against
+`/api/auth/login` answered `401 {"error":"Invalid email or password"}` in ~2s — the network was
+never the problem. Checking the server before rewriting the client is what turned a guess into
+a one-line fix.
+
 ### Not verified
 
 No request has been sent to the live API. Response shapes and status codes were read from
@@ -883,8 +915,12 @@ backend source, not observed, so a wrong assumption here is entirely possible. U
 
 ### Verification
 
-`flutter analyze` clean, 92 tests passing (12 new: 11 covering compression and DTO parsing, 1
-covering the signed-out gate). `flutter build apk --debug` succeeds. Not yet committed.
+`flutter analyze` clean, 97 tests passing (17 new: 11 compression and DTO parsing, 1 signed-out
+gate, 5 session/Bearer). `flutter build apk --debug` succeeds.
+
+The login round trip is still unverified against a live account — the tests drive a stubbed
+adapter, not Vercel. What they establish is that the token is stored and attached, which was
+the defect.
 
 The unrelated `browse_screen.dart` work and `test/browse_screen_test.dart` remain uncommitted
 and untouched.
