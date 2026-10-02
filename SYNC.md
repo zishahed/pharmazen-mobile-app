@@ -227,11 +227,24 @@ Importing through the existing lossy `seed.js` would defeat the purpose: it disc
 ## Phase 2 — `/api/sync` endpoints
 
 - `GET /api/sync?since=<ISO>&cursor=<opaque>` →
-  `{ nextCursor, isFullResync, medicines[], generics[] }`, page-bounded.
+  `{ nextCursor, serverTime, isFullResync, medicines[], generics[] }`, page-bounded.
   `vercel.json` declares no `maxDuration`, so page size must stay conservative.
 - `GET /api/sync/manifest` → `[[remoteId, hash], …]`, used only for repair/drift detection.
 - Public, no auth. Rate-limited, ETag on the manifest.
 - `isFullResync: true` when the supplied `since` predates the server's retention window.
+- **`serverTime` is required, not optional.** It is the server's clock at the instant
+  the snapshot was taken, repeated on every page. The client stores it as
+  `last_success_at` once the final page commits, and sends it back as the next `?since=`.
+  It marks the instant after which *every* change is guaranteed to surface in a later
+  delta — including rows edited while the pages were still being fetched, which is
+  exactly what a cursor cannot otherwise express.
+
+  Deriving the next cursor from `MAX(updatedAt)` in the payload instead is subtly wrong:
+  a row sharing a timestamp with the final row of the final page can be skipped forever.
+  The client tolerates its absence (it falls back to `MAX(updatedAt)`) so an incomplete
+  server is still testable, but that fallback loses those rows until the next full
+  resync. Take it from the database, not from `Date.now()` in Node, so clock skew on
+  the server host cannot run the cursor backwards.
 
 ---
 
@@ -293,15 +306,19 @@ short `BEGIN IMMEDIATE` transactions, and enable WAL (the asset is currently
 A crash mid-sync leaves the cursor unchanged, so the run is safely repeatable — every
 write is an upsert keyed on `remote_id`.
 
-**Triggers.** Post-first-frame on cold start, debounced on connectivity regained, and
-manual pull-to-refresh — all behind a single-flight mutex and a 15-minute minimum interval.
+**Triggers.** Post-first-frame on cold start, on connectivity regained, and manual
+pull-to-refresh — all behind single-flight and a 15-minute minimum interval. Only the
+manual trigger bypasses that interval; the interval is what debounces a connection that
+is flapping rather than a separate timer, so a user cannot turn connectivity changes
+into a request loop either.
 
 ---
 
 ## Phase 6 — Hardening
 
-- Add `<uses-permission android:name="android.permission.INTERNET"/>` to
-  `android/app/src/main/AndroidManifest.xml`. It is absent today; every request fails without it.
+- ~~Add `<uses-permission android:name="android.permission.INTERNET"/>` to
+  `android/app/src/main/AndroidManifest.xml`.~~ Done in Phase 5 — release builds are the
+  only ones that lacked it, since the debug and profile manifests already declare it.
 - Guard deletions: only tombstone after a *complete* manifest whose row count is within
   ~20% of `last_manifest_count`.
 - Never bulk-delete. Tombstone individually.
@@ -362,3 +379,15 @@ Phase 4 gotchas worth remembering
 - Tests must not open the tracked asset directly; `withAssetCopy` copies it. Verified the asset md5 is unchanged across a full run.
 - Re-seeding is only safe while this file holds catalog data plus sync bookkeeping. Once Phase 5 adds a local order queue (e.g. `app_metadata.last_pushed_order_id`), a future `kBundledSchemaVersion` bump will wipe unpushed state — preserve `app_metadata` across the copy or gate the bump.
 - Still to do later: `journal_mode` is `delete`, so Phase 5 must enable WAL, and `discardCatalog` now clears the `-wal`/`-shm` sidecars so that swap is safe.
+
+
+Phase 5 is complete and verified: flutter analyze clean, 63 tests passing (38 pre-existing + 25 new), bundled asset untouched.
+New files: lib/core/config/api_config.dart, lib/core/network/connectivity_service.dart, lib/data/remote/{sync_manifest,sync_api_client}.dart, lib/data/sync/{generic_resolver,sync_applier,sync_engine}.dart, lib/data/providers/sync_providers.dart, test/sync_test.dart.
+Wired up: WAL on the on-device copy only, cold-start + connectivity triggers via syncTriggersProvider, pull-to-refresh on both result lists, and android.permission.INTERNET (release builds were the only ones missing it — debug/profile already had it).
+Four real bugs the tests caught, now fixed:
+1. ensureSchema seeded every sync_state key with the schema version, so a fresh install's first sync would have sent ?since=2 as its cursor (app_database.dart:37 — now per-key kSyncStateDefaults). This was Phase 4 code, not Phase 5.
+2. SyncApplier._nextBrandId did (maxId ?? 0) < 0 ? 0 : maxId! + 1 — the ?? guarded the comparison but not the branch, crashing on an empty catalog.
+3. _send returned an exhausted 5xx as if it were a valid response, and fetchDelta parsed the error body as an empty page — which would have advanced the cursor over data never fetched. Now the last retryable attempt throws, and non-2xx is rejected before parsing (404 → unsupported, not failed).
+4. GenericResolver.resolveId trusted the server's generic_id without checking it exists locally, leaving dangling references. It now falls through to name resolution and a negative stub.
+One contract change you need to action: I added serverTime to the /api/sync response and documented why in SYNC.md. Advancing the cursor to MAX(updatedAt) instead silently skips any row sharing a timestamp with the final row of the final page — serverTime is the snapshot instant that makes the cursor safe. The client tolerates its absence so Phase 2 can be built incrementally, but take it from the database rather than Date.now().
+Two notes on scope: I did not wire verifyAgainstManifest() into the automatic path — a ~21.7k-row manifest on every sync isn't warranted, and the ~20% count guard that makes tombstoning safe is still Phase 6 work. And I left main.dart free of ProviderScope nesting by using UncontrolledProviderScope, which is what keeps widget_test.dart (which pumps PharmaZenApp with no container) passing. Nothing is committed yet.

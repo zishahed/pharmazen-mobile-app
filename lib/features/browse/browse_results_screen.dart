@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/providers/medicine_providers.dart';
+import '../../data/providers/sync_providers.dart';
+import '../../data/sync/sync_engine.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
 import '../medicines/widgets/medicines_widgets.dart';
@@ -96,13 +98,27 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
       );
     }
 
-    return ListView.separated(
-      itemCount: results.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, index) => MedicineTile(
-        medicine: results[index],
-        onTap: () => context.push('/medicine', extra: results[index]),
+    // Wrapped in RefreshIndicator so a user who suspects the bundled catalog is
+    // stale can pull it down. The manual trigger bypasses the 15-minute floor,
+    // so this always reaches the server rather than no-opping.
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.separated(
+        itemCount: results.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (context, index) => MedicineTile(
+          medicine: results[index],
+          onTap: () => context.push('/medicine', extra: results[index]),
+        ),
       ),
     );
+  }
+
+  /// Pulls a fresh delta, then re-queries. The reload is required even when the
+  /// sync reports `tooSoon`/`unsupported`, because the list must still pick up
+  /// whatever a concurrent automatic run committed.
+  Future<void> _refresh() async {
+    await ref.read(syncEngineProvider).sync(trigger: SyncTrigger.manual);
+    await _load();
   }
 }

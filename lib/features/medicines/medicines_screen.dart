@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/providers/medicine_providers.dart';
+import '../../data/providers/sync_providers.dart';
+import '../../data/sync/sync_engine.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
 import 'widgets/medicines_widgets.dart';
@@ -155,13 +157,22 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
       );
     }
 
-    return ListView.separated(
-      itemCount: results.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 10),
-      itemBuilder: (context, index) => MedicineTile(
-        medicine: results[index],
-        onTap: () => context.push('/medicine', extra: results[index]),
+    // See browse_results_screen.dart for why the reload runs unconditionally.
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.separated(
+        itemCount: results.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (context, index) => MedicineTile(
+          medicine: results[index],
+          onTap: () => context.push('/medicine', extra: results[index]),
+        ),
       ),
     );
+  }
+
+  Future<void> _refresh() async {
+    await ref.read(syncEngineProvider).sync(trigger: SyncTrigger.manual);
+    await _performSearch(_controller.text);
   }
 }

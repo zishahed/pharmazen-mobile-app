@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required by the Phase 5 sync client (Dio). Debug/profile manifests already
+         declare it, so release builds are the only ones that would break. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="pharmazen_mobile_app"
         android:name="${applicationName}"

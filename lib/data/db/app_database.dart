@@ -34,6 +34,18 @@ const List<String> kSyncStateKeys = [
   'bundled_schema_version',
 ];
 
+/// Initial value for each `sync_state` key on a fresh install.
+///
+/// Only `bundled_schema_version` has a real default. The other two must start
+/// empty: a fabricated `last_success_at` would be sent as `?since=` on the very
+/// first sync, and a fabricated `last_manifest_count` would be used as the
+/// manifest-size sanity baseline, defeating the check it exists for.
+const Map<String, String?> kSyncStateDefaults = {
+  'last_success_at': null,
+  'last_manifest_count': null,
+  'bundled_schema_version': '$kBundledSchemaVersion',
+};
+
 /// Reads the major version out of an `app_metadata.database_version` value.
 ///
 /// The asset stores `'2.0'`, not `'2'`, so this cannot be a plain `int.parse`:
@@ -48,7 +60,19 @@ int? parseSchemaVersion(String? raw) {
 }
 
 class AppDatabase extends GeneratedDatabase {
-  AppDatabase(super.executor);
+  AppDatabase(super.executor, {this.enableWal = false});
+
+  /// Switches the file to WAL journaling on open.
+  ///
+  /// Only the on-device copy sets this. WAL lets readers keep reading while a
+  /// sync batch is being written, which matters because Drift runs the
+  /// connection on a background isolate and serialises queries behind writes —
+  /// without it, a 500-row batch blocks every search until it commits.
+  ///
+  /// The bundled asset stays in `delete` mode: it is shipped as a single file,
+  /// and the sidecars it would produce would have to be accounted for on every
+  /// re-seed. `discardCatalog` clears the sidecars so a re-seed under WAL is safe.
+  final bool enableWal;
 
   @override
   int get schemaVersion => kBundledSchemaVersion;
@@ -64,7 +88,14 @@ class AppDatabase extends GeneratedDatabase {
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (m, from, to) async {},
-    beforeOpen: (details) => ensureSchema(),
+    beforeOpen: (details) async {
+      if (enableWal) {
+        // Returns a row ('wal'); customSelect rather than customStatement because
+        // a pragma that produces output is not a plain statement.
+        await customSelect('PRAGMA journal_mode = WAL').get();
+      }
+      await ensureSchema();
+    },
   );
 
   /// Applies the schema to whatever file this connection points at. Safe to call
@@ -125,7 +156,7 @@ class AppDatabase extends GeneratedDatabase {
         await customStatement('''
           INSERT INTO sync_state (key, value, updated_at)
           VALUES (?, ?, CURRENT_TIMESTAMP)
-        ''', [key, '$kBundledSchemaVersion']);
+        ''', [key, kSyncStateDefaults[key]]);
       }
 
       await _stampSchemaVersion();
