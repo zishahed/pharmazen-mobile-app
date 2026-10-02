@@ -331,9 +331,207 @@ into a request loop either.
 
 ---
 
+## Phase 7 — Prescription gate + Cloudinary hardening (backend)
+
+`is_sensitive` was added in Phase 1A as a sync column, and it has quietly become the
+source of truth for everything that matters: `MEDICINE_SELECT` (`sync/wire.js`) ships
+`isSensitive` and *not* `requiresPrescription`, `content_hash.js:102` hashes `isSensitive`
+and *not* `requiresPrescription`, and the app holds zero references to
+`requires_prescription`. `requires_prescription` is a legacy duplicate that only the
+backend and the React frontend still read.
+
+Measured across all 21,715 live medicines, the two columns are identical — 21,624 false /
+91 true, zero divergence. So moving the gate is behavior-preserving, and because no
+content hash changes, **no device resyncs** and the 17.1MB bundled asset stays valid.
+
+### Unify the gate on `is_sensitive`, then drop the column later
+
+Sites to switch to `isSensitive`: `cart.service.js:27,50`,
+`medicines.service.js:55-57,177,229,251`, `medicines.controller.js:18`,
+`orders.service.js:28,37,106`, plus `AdminDashboard`, `MedicineCard` and `CheckoutPage`
+in the React frontend.
+
+**The drop is split across three deploys on purpose.** `MedicineCard.jsx:10,116`
+destructures `requiresPrescription` to render the restricted badge and `CheckoutPage`
+depends on `item.requiresPrescription` from `cart.service.js:50`. Dropping the field out
+of the API response before the frontend is updated would silently remove every badge on
+the live website — a regression that is invisible in tests and obvious to customers. So:
+
+1. Backend serves **both** `isSensitive` (authoritative) and `requiresPrescription`
+   (derived from it), and gates internally on `isSensitive`. Website unaffected.
+2. Frontend reads `isSensitive`, still falling back to `requiresPrescription`.
+3. Only after the frontend deploy is verified does the column actually drop, along with
+   the derived alias.
+
+Steps 1 and 2 are safe in either deploy order; step 3 is not, which is why it is separate.
+
+### The real upload limit is 4.5MB for the whole request, not per file
+
+`prescriptions.routes.js` allows 10MB × 4 files = 40MB, buffered by
+`multer.memoryStorage`. Probing the deployed backend:
+
+```
+1MB   -> 401   (request reached the app)
+3MB   -> 401
+4MB   -> 401
+4.5MB -> 413   (rejected at the edge, app never runs)
+12MB  -> 413
+```
+
+Vercel caps the **entire multipart body**, so the existing contract is unreachable by a
+wide margin — even four 1MB files overflow it. This is why compression is not a
+nice-to-have but the thing that makes upload possible at all: a 12MP phone photo is
+3-8MB, and resized to ~1600px at JPEG q80 it is 200-400KB.
+
+- Size the multer cap to fit inside the measured envelope including multipart overhead.
+- Add a `PayloadTooLargeError` handler returning a clear 413 instead of a generic 500.
+- `PrescriptionUploadPage.jsx` compresses client-side before upload.
+
+### Cloudinary assets currently leak on every partial failure
+
+`prescriptions.controller.js:36` uploads with `Promise.all` and writes the DB row
+afterwards. If file 3 of 4 fails, files 1-2 are already in Cloudinary with no DB row
+pointing at them. If the `prisma.prescription.create` then fails, *every* uploaded file
+is orphaned. `cloudinary_public_id` is stored on every row and never read — which is the
+only reason to store it.
+
+- Sequential upload with compensating `destroy()` on any later failure, DB write included.
+- A delete endpoint that actually uses the stored `cloudinary_public_id`.
+- Cleanup wired into user deletion; `onDelete: Cascade` removes DB rows today while the
+  Cloudinary originals survive forever.
+- Uploads switched to `access_mode: 'authenticated'`.
+
+### Prescription images stop being public URLs
+
+`secure_url` is unauthenticated and permanent, and `orders.service.js:207` echoes a raw
+`fileUrl` into the order response. These are scans of medical documents, reachable by
+anyone who ever holds the link.
+
+- New authenticated endpoint returning a short-lived signed URL, scoped to the prescription
+  owner or a pharmacist/admin.
+- Stop emitting raw `secure_url` in prescription and order payloads.
+- Migrate the 17 existing files to authenticated access mode. Production is not empty —
+  there are 10 prescriptions / 17 files today (5 approved, 3 pending, 2 rejected), so this
+  is a one-way migration on live assets: any link already shared with a pharmacist stops
+  resolving. Accepted.
+
+### Stop trusting the client
+
+- Validate `medicineId` exists and is actually sensitive;
+  `PrescriptionUploadPage.jsx:176` sends `medicineName` and the backend stores it verbatim.
+- Derive `medicineName` server-side.
+- Validate `endDate >= startDate`.
+
+### Phase 7b — prescription dispensing limits
+
+The gate above asks only "is there an approved, in-date prescription?". It never asks
+how much of it was already used, so one approval authorised **unlimited** repeat orders
+for the whole date range. That is not hypothetical: of the 5 approved prescriptions in
+production, one authorised 4 orders and another 2.
+
+An approval is now a budget rather than a boolean.
+
+**Units, not orders.** A prescription is a course of treatment ("1 tab twice daily × 30
+days" = 60 tablets) and a patient may legitimately split that across several orders, so
+counting orders would either block legitimate refills or bound nothing. Capping units
+bounds the order count implicitly, since every order needs at least one unit.
+
+- `prescriptions.max_quantity` — what the pharmacist authorises on approval.
+- `prescriptions.consumed_quantity` — dispensed so far.
+- `order_items.prescription_id` — which prescription authorised each line.
+
+**One enforcement point, so this cannot be app-only.** `createOrderFromCart` has exactly
+one caller (`orders.controller.js:7` → `POST /api/orders`), shared by the website and the
+app. Forking the rule so only the app honoured a limit would mean two contradictory
+compliance answers to the same account data, decided by which client the patient happened
+to use. The limit therefore lives in the shared backend and applies to both — and the
+website is not "broken" by it, it simply starts honouring the rule it always meant to.
+
+**The reservation is atomic.** Reading `consumed_quantity` and writing `+ n` would let
+two simultaneous checkouts both pass the check and together overshoot. `reserveUnits`
+instead issues one conditional UPDATE with the capacity test in the `WHERE` clause, so
+the database re-evaluates it against the committed row and the loser claims 0 rows.
+Verified on a scratch Postgres: 10 concurrent reservations of 2 units against a limit of
+10 yielded exactly 5 successes and consumed exactly 10.
+
+Reservations happen inside the same transaction as the order insert, so a failed order
+rolls back the allowance instead of silently burning it. `cancelOrder` releases the units
+via the line-level `prescription_id`, and its status flip is a conditional `updateMany`
+so two concurrent cancels cannot both refund.
+
+**The default cannot break anyone.** All 10 prescriptions in production have
+`end_date < now()`, so none can authorise an order today and none is touched by the
+backfill. `DEFAULT_AUTHORIZED_QUANTITY` is 5 — deliberately equal to the existing
+per-order `MAX_QUANTITY`, so "no figure stated" means one cart's worth rather than an
+arbitrary number. The backfill records real pre-existing over-use in `consumed_quantity`
+rather than resetting it to 0, which can leave `consumed > max` on historical rows; the
+API clamps `remaining` at 0 rather than showing a negative.
+
+**Rejected checkouts now answer 409, not 500.** Both prescription rejections carry
+`error.status`. A routine business refusal was reporting as a server outage in error
+monitoring. Safe to change because `CheckoutPage.jsx:59` branches on
+`result.message.includes('prescription')` and never reads the HTTP status — so the warning
+banner is unchanged, and both messages deliberately keep the word "prescription".
+
+### Deliberately not in this phase
+
+`orders.service.js:57` assigns `prescriptionId` inside a loop over restricted medicines,
+so an order containing several restricted medicines records only the *last* prescription.
+`Order.prescriptionId` is a single FK, so the audit trail is incomplete. Fixing it needs
+an order↔prescription join table, a Prisma model, and changes to three order response
+shapes — real breakage risk for the SDP-I website, and cart is explicitly out of scope for
+now. **Deferred to its own phase**, with the `requires_prescription` drop, once both can be
+verified against the deployed website.
+
+---
+
+## Phase 8 — Prescription upload in the app (online-only)
+
+The app is a read-only offline catalogue today: `lib/features/` holds only `browse`,
+`home` and `medicines`, and `sync_api_client.dart:26` documents that the sync endpoints
+need no auth. Prescription upload is the first authenticated write, so it brings a login
+subsystem with it.
+
+### New dependencies
+
+`image_picker`, `image` (resize/encode), `flutter_secure_storage`. Everything else needed
+is already present — `dio`, `flutter_riverpod`, `go_router`, `connectivity_plus`.
+
+### Auth
+
+Reuse `/api/auth/login` + `/refresh` + `/me`; the app does not get its own account system.
+Access tokens expire in **15 minutes** (`utils/jwt.js:11`), so a Dio interceptor must
+attach the access token and refresh transparently on 401 — without that, a slow
+prescription flow fails mid-way for reasons that look like network errors.
+
+Tokens go in `flutter_secure_storage`, never `shared_preferences`.
+
+### Online-only by design
+
+`connectivity_plus` gates the upload with an explicit offline message rather than a
+timeout. Picking the medicine still works offline: the local SQLite copy already carries
+`is_sensitive`, so the restricted list can be rendered with no network at all. Only the
+upload itself requires connectivity.
+
+### The screen
+
+Capture or pick → compress → choose a medicine from local SQLite where
+`is_sensitive = 1` → start/end dates → multipart POST to `/api/prescriptions`. One
+prescription per upload, matching the existing schema and the pharmacist review flow.
+
+Plus a "my prescriptions" list showing review status, and `go_router` + Riverpod
+wiring with tests for the compression step and the multipart payload shape.
+
+---
+
 ## Execution order
 
 **Pre-flight → Phase 1A → Phase 4 → Phase 5 → Phase 1B → Phase 2 → Phase 3**
+
+Phases 7 and 8 come after Phase 6 and are independent of it — the sync pipeline is done,
+so they no longer interact. Within Phase 7 the order is load-bearing: compression and the
+size cap first (nothing uploads otherwise), then orphan cleanup, then signed URLs, and the
+`requires_prescription` drop last and only after the frontend deploy is verified.
 
 Local schema work comes early: it is offline, independently testable, and unblocks
 everything else. The Neon changes are split so that Phase 1A (inert filters, no behavior
