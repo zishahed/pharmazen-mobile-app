@@ -1,4 +1,14 @@
 class Medicine {
+  /// The server-side UUID (`medicines.id` in Postgres), or null when the row has
+  /// not been synced yet.
+  ///
+  /// Needed whenever a request has to name this medicine to the API — a
+  /// prescription upload sends `medicineId`, and the backend column is a
+  /// `@db.Uuid`, so the local `brand_id` would be rejected. Only synced rows
+  /// have one, which is a legitimate reason to refuse the action rather than
+  /// send an id the server cannot resolve.
+  final String? remoteId;
+
   final int brandId;
   final String brandName;
   final String? type;
@@ -13,6 +23,7 @@ class Medicine {
   final bool isSensitive;
 
   const Medicine({
+    this.remoteId,
     required this.brandId,
     required this.brandName,
     this.type,

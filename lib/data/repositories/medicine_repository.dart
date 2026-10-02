@@ -86,7 +86,7 @@ class MedicineRepository {
   String _buildExactQuery(MedicineSearchMode mode) {
     return switch (mode) {
       MedicineSearchMode.category => '''
-        SELECT m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
+        SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
         FROM medicines m
@@ -96,7 +96,7 @@ class MedicineRepository {
                 m.brand_name COLLATE NOCASE ASC
       ''',
       MedicineSearchMode.indication => '''
-        SELECT m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
+        SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
         FROM medicines m
@@ -140,7 +140,7 @@ class MedicineRepository {
         LIMIT 100
       ''',
       MedicineSearchMode.category => '''
-        SELECT m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
+        SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
         FROM medicines m
@@ -151,7 +151,7 @@ class MedicineRepository {
         LIMIT 100
       ''',
       MedicineSearchMode.indication => '''
-        SELECT m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
+        SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
         FROM medicines m
@@ -214,6 +214,7 @@ class MedicineRepository {
   Medicine _toMedicine(QueryRow row) {
     final data = row.data;
     return Medicine(
+      remoteId: data['remote_id'] as String?,
       brandId: data['brand_id'] as int,
       brandName: data['brand_name'] as String,
       type: data['type'] as String?,
