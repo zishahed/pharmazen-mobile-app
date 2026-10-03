@@ -38,10 +38,10 @@ void main() {
     expect(find.text('Drug by category'), findsOneWidget);
     expect(find.text('Drug by Indication'), findsOneWidget);
 
+    expect(find.text('Home'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);
     expect(find.text('Cart'), findsOneWidget);
     expect(find.text('Prescription'), findsOneWidget);
-    expect(find.text('Favorites'), findsOneWidget);
   });
 
   testWidgets('signed-out users see the sign-in screen, not the home tabs', (
@@ -59,7 +59,7 @@ void main() {
 
     expect(find.text('Sign in'), findsOneWidget);
     expect(find.text('Sign in to upload prescriptions'), findsOneWidget);
-    expect(find.text('Favorites'), findsNothing);
+    expect(find.text('Home'), findsNothing);
   });
 }
 

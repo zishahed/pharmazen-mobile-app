@@ -51,11 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
             selectedIcon: Icon(Icons.description_rounded),
             label: 'Prescription',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.favorite_outline),
-            selectedIcon: Icon(Icons.favorite),
-            label: 'Favorites',
-          ),
         ],
       ),
     );
@@ -172,8 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
         0 => 'Home',
         1 => 'Profile',
         2 => 'Cart',
-        3 => 'Prescription',
-        _ => 'Favorites',
+        _ => 'Prescription',
       };
 }
 
