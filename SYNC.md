@@ -1000,5 +1000,49 @@ The login round trip is still unverified against a live account — the tests dr
 adapter, not Vercel. What they establish is that the token is stored and attached, which was the
 first defect, and that a request actually leaves the device, which was the second.
 
-The unrelated `browse_screen.dart` work and `test/browse_screen_test.dart` remain uncommitted
-and untouched.
+The unrelated `browse_screen.dart` work predates this section and has now been committed on its
+own — see "Browse list log" below.
+
+## Browse list log
+
+Unrelated to the sync work above, but it sat uncommitted for two phases, so it is worth writing
+down what it does and why.
+
+### The A-Z jump built every row to scroll a list it never showed
+
+`BrowseScreen` listed every value of a browse column — 1,711 generic names, 672 indications, 358
+drug classes, all `DISTINCT` reads from `generics` — by handing `ListView` a `children:` list
+built in one go. Two consequences, both measured on the real asset:
+
+* every row was constructed on every build, not just the visible ones;
+* tapping a letter called `animateTo`, and animating across tens of thousands of pixels builds
+  and discards hundreds of rows per frame. The deep letters — the ones an A-Z index exists for —
+  were the slowest thing in the app.
+
+The fix replaces the eager list with a `CustomScrollView` over a `SliverVariatedExtentList` of a
+flat `_BrowseRow` list (header or value), so only visible rows are built. Every header has the
+same height and so does every value row, which makes the offset of any letter a running sum of
+the two rather than a search over measured positions.
+
+Two details that are the actual difficulty:
+
+* **the scroll extent must be known before anything is built.** A lazy sliver extrapolates its
+  extent from the rows it happens to hold, which leaves the last letters unreachable — the
+  symptom is a jump to "Z" that stops halfway. `_BrowseRowDelegate.estimateMaxScrollOffset`
+  reports the real total, computed once from the measured extents.
+* **the row heights are only knowable from a layout, and the offsets are derived from them.** Two
+  offscreen `Offstage` sample rows are laid out but never painted, purely so their heights can be
+  read, and the list itself waits one frame for them. `didChangeDependencies` drops the cached
+  heights, because a theme or text-scale change invalidates them.
+
+Long hops now `jumpTo` and short ones still animate, thresholded at two viewport heights — the
+test asserts both halves of that, since a jump that always animates is the original bug and one
+that never animates feels broken.
+
+### Verification
+
+`flutter analyze` clean, full suite 104 passing. `browse_screen_test.dart` adds 4 widget tests
+against the real asset: a far jump lands exactly on the section header (expected offset summed
+from measured row heights rather than from the implementation's own arithmetic), a 1,000+ value
+list builds fewer than 60 rows, a far jump is at its final offset with no pump at all, and a
+neighbouring letter animates.

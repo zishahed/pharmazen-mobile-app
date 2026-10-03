@@ -17,27 +17,93 @@ class BrowseScreen extends ConsumerStatefulWidget {
   ConsumerState<BrowseScreen> createState() => _BrowseScreenState();
 }
 
+/// A single row of the browse list: either a letter header or a value.
+class _BrowseRow {
+  const _BrowseRow.header(this.letter) : value = null;
+
+  const _BrowseRow.item(this.value) : letter = null;
+
+  final String? letter;
+  final String? value;
+
+  bool get isHeader => letter != null;
+}
+
+/// Reports the real total height of the list. Without this the viewport would
+/// extrapolate it from the rows it happens to have built, which leaves the
+/// deepest letters unreachable.
+class _BrowseRowDelegate extends SliverChildBuilderDelegate {
+  _BrowseRowDelegate({
+    required NullableIndexedWidgetBuilder itemBuilder,
+    required int childCount,
+    required this.contentExtent,
+  }) : super(itemBuilder, childCount: childCount);
+
+  final double contentExtent;
+
+  @override
+  double? estimateMaxScrollOffset(
+    int firstIndex,
+    int lastIndex,
+    double leadingScrollOffset,
+    double trailingScrollOffset,
+  ) => contentExtent;
+
+  @override
+  bool shouldRebuild(_BrowseRowDelegate oldDelegate) =>
+      super.shouldRebuild(oldDelegate) ||
+      contentExtent != oldDelegate.contentExtent;
+}
+
 class _BrowseScreenState extends ConsumerState<BrowseScreen> {
   static const _topPadding = 8.0;
+  static const _bottomPadding = 20.0;
+  static const _headerPadding = EdgeInsets.fromLTRB(16, 12, 16, 8);
+  static const _headerTextStyle = TextStyle(
+    color: AppColors.primaryGreen,
+    fontWeight: FontWeight.w800,
+    fontSize: 16,
+  );
+  static const _itemTextStyle = TextStyle(fontSize: 14);
 
   final ScrollController _scrollController = ScrollController();
-  final Map<String, GlobalKey> _headerKeys = {};
-  final GlobalKey _firstItemKey = GlobalKey();
   final ValueNotifier<int> _activeIndex = ValueNotifier(0);
 
+  // Offscreen copies of the two row shapes. Their heights are measured once and
+  // then handed to the sliver, so every offset below stays exact without having
+  // to lay out the whole list.
+  final GlobalKey _sampleHeaderKey = GlobalKey();
+  final GlobalKey _sampleItemKey = GlobalKey();
+
   List<String> _letters = const [];
-  Map<String, List<String>> _sections = const {};
+  List<_BrowseRow> _rows = const [];
+  List<double> _sectionOffsets = const [];
+
   bool _loading = true;
   String? _error;
 
-  double? _headerHeight;
-  double? _itemHeight;
+  double _headerExtent = 0;
+  double _itemExtent = 0;
+  double _contentExtent = 0;
+
+  bool get _extentsReady => _headerExtent > 0 && _itemExtent > 0;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Theme, text scale or metrics may have changed, so the cached heights can
+    // no longer be trusted.
+    _headerExtent = 0;
+    _itemExtent = 0;
+    _rebuildSectionOffsets();
+    _scheduleMeasurement();
   }
 
   @override
@@ -58,9 +124,11 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
       final values =
           await ref.read(medicineRepositoryProvider).allValues(widget.mode);
       if (!mounted) return;
-      _groupValues(values);
-      setState(() => _loading = false);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _measureSizes());
+      setState(() {
+        _groupValues(values);
+        _loading = false;
+      });
+      _scheduleMeasurement();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -73,51 +141,84 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
   void _groupValues(List<String> values) {
     final sections = <String, List<String>>{};
     for (final value in values) {
-      final first = value.trim().isNotEmpty ? value.trim()[0].toUpperCase() : '#';
+      final trimmed = value.trim();
+      final first = trimmed.isEmpty ? '' : trimmed[0].toUpperCase();
       final letter = RegExp('[A-Za-z]').hasMatch(first) ? first : '#';
-      (sections[letter] ??= []).add(value);
+      (sections[letter] ??= <String>[]).add(value);
     }
-    _sections = sections;
+
+    final rows = <_BrowseRow>[];
+    for (final entry in sections.entries) {
+      rows.add(_BrowseRow.header(entry.key));
+      for (final value in entry.value) {
+        rows.add(_BrowseRow.item(value));
+      }
+    }
+
     _letters = sections.keys.toList(growable: false);
-    _headerKeys
-      ..clear()
-      ..addEntries(_letters.map((letter) => MapEntry(letter, GlobalKey())));
+    _rows = List<_BrowseRow>.unmodifiable(rows);
+    _rebuildSectionOffsets();
   }
 
-  void _measureSizes() {
-    final headerBox = _headerKeys[_letters.firstOrNull]?.currentContext
-        ?.findRenderObject() as RenderBox?;
-    final itemBox = _firstItemKey.currentContext?.findRenderObject() as RenderBox?;
-    final headerHeight = headerBox?.size.height;
-    final itemHeight = itemBox?.size.height;
-    if (headerHeight == null || itemHeight == null) return;
-    if (_headerHeight == headerHeight && _itemHeight == itemHeight) return;
-    setState(() {
-      _headerHeight = headerHeight;
-      _itemHeight = itemHeight;
+  void _scheduleMeasurement() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(_measureExtents);
     });
   }
 
-  List<double> _sectionOffsets() {
-    final headerHeight = _headerHeight;
-    final itemHeight = _itemHeight;
-    if (headerHeight == null || itemHeight == null) return const [];
+  /// Every header has the same height and so does every value row, which makes
+  /// the offset of any letter a plain sum of the two.
+  void _measureExtents() {
+    if (_rows.length < 2) return;
+    final headerBox =
+        _sampleHeaderKey.currentContext?.findRenderObject() as RenderBox?;
+    final itemBox =
+        _sampleItemKey.currentContext?.findRenderObject() as RenderBox?;
+    final headerExtent = headerBox?.size.height ?? 0;
+    final itemExtent = itemBox?.size.height ?? 0;
+    if (headerExtent <= 0 || itemExtent <= 0) return;
+    if (headerExtent == _headerExtent && itemExtent == _itemExtent) return;
+    _headerExtent = headerExtent;
+    _itemExtent = itemExtent;
+    _rebuildSectionOffsets();
+  }
 
-    final offsets = <double>[];
-    var offset = _topPadding;
-    for (final letter in _letters) {
-      offsets.add(offset);
-      offset += headerHeight + (_sections[letter]?.length ?? 0) * itemHeight;
+  void _rebuildSectionOffsets() {
+    if (!_extentsReady || _rows.isEmpty) {
+      _sectionOffsets = const [];
+      _contentExtent = 0;
+      return;
     }
-    return offsets;
+
+    var offset = _topPadding;
+    final offsets = <double>[];
+    for (final row in _rows) {
+      if (row.isHeader) {
+        offsets.add(offset);
+        offset += _headerExtent;
+      } else {
+        offset += _itemExtent;
+      }
+    }
+    _contentExtent = offset - _topPadding;
+    _sectionOffsets = List<double>.unmodifiable(offsets);
   }
 
   int _activeSectionForOffset(double pixels) {
-    final offsets = _sectionOffsets();
+    final offsets = _sectionOffsets;
     if (offsets.isEmpty) return 0;
+    var low = 0;
+    var high = offsets.length - 1;
     var active = 0;
-    for (var i = 0; i < offsets.length; i++) {
-      if (offsets[i] <= pixels) active = i;
+    while (low <= high) {
+      final mid = (low + high) >> 1;
+      if (offsets[mid] <= pixels) {
+        active = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
     }
     return active;
   }
@@ -126,7 +227,7 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
     final position = _scrollController.position;
     if (!position.hasContentDimensions) return;
     final active = _activeSectionForOffset(
-      position.pixels.clamp(0, position.maxScrollExtent),
+      position.pixels.clamp(0.0, position.maxScrollExtent),
     );
     if (active != _activeIndex.value) {
       _activeIndex.value = active;
@@ -141,17 +242,27 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
 
   void _onIndexSelected(int index) {
     _onIndexHover(index);
-    final offsets = _sectionOffsets();
-    if (offsets.isEmpty || index >= offsets.length) return;
-    final target = offsets[index].clamp(
-      0.0,
-      _scrollController.position.maxScrollExtent,
-    );
-    _scrollController.animateTo(
-      target,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-    );
+    if (index < 0 || index >= _sectionOffsets.length) return;
+    if (!_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions) return;
+
+    final target = _sectionOffsets[index].clamp(0.0, position.maxScrollExtent);
+    final distance = (target - position.pixels).abs();
+
+    // Animating across tens of thousands of pixels builds and throws away
+    // hundreds of rows per frame, which is what used to freeze the UI, so long
+    // hops are applied at once instead.
+    if (distance <= position.viewportDimension * 2) {
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      _scrollController.jumpTo(target);
+    }
   }
 
   @override
@@ -175,75 +286,110 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
       );
     }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Stack(
       children: [
-        _AlphabetIndex(
-          letters: _letters,
-          activeIndex: _activeIndex,
-          onHover: _onIndexHover,
-          onSelected: _onIndexSelected,
+        Positioned.fill(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _AlphabetIndex(
+                letters: _letters,
+                activeIndex: _activeIndex,
+                onHover: _onIndexHover,
+                onSelected: _onIndexSelected,
+              ),
+              // The list needs the measured row heights, so it waits one frame
+              // for them.
+              Expanded(
+                child: _extentsReady ? _buildList() : const SizedBox.expand(),
+              ),
+            ],
+          ),
         ),
-        Expanded(
-          child: ListView(
-            controller: _scrollController,
-            padding: const EdgeInsets.only(top: 8, bottom: 20),
-            children: _buildRows(),
+        if (_rows.length > 1) _buildRowSamples(),
+      ],
+    );
+  }
+
+  Widget _buildList() {
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.only(
+            top: _topPadding,
+            bottom: _bottomPadding,
+          ),
+          sliver: SliverVariedExtentList(
+            itemExtentBuilder: (index, _) =>
+                _rows[index].isHeader ? _headerExtent : _itemExtent,
+            delegate: _BrowseRowDelegate(
+              itemBuilder: _buildRow,
+              childCount: _rows.length,
+              contentExtent: _contentExtent,
+            ),
           ),
         ),
       ],
     );
   }
 
-  List<Widget> _buildRows() {
-    final rows = <Widget>[];
-    var firstItem = true;
-    for (final letter in _letters) {
-      rows.add(
-        Container(
-          key: _headerKeys[letter],
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          color: AppColors.lightGreen,
-          child: Text(
-            letter,
-            style: const TextStyle(
-              color: AppColors.primaryGreen,
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-            ),
-          ),
+  /// Laid out but never painted, purely so the two row heights can be read.
+  Widget _buildRowSamples() {
+    return Positioned.fill(
+      child: Offstage(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildHeader(_letters.first, key: _sampleHeaderKey),
+            _buildItem(_rows[1].value!, key: _sampleItemKey),
+          ],
         ),
-      );
-      for (final value in _sections[letter]!) {
-        rows.add(
-          ListTile(
-            key: firstItem ? _firstItemKey : null,
-            onTap: () => context.push(
-              '/browse/results'
-              '?type=${widget.mode.name}'
-              '&value=${Uri.encodeQueryComponent(value)}',
-            ),
-            leading: const Icon(
-              Icons.medication_outlined,
-              color: AppColors.primaryBlue,
-            ),
-            title: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14),
-            ),
-            trailing: const Icon(
-              Icons.chevron_right_rounded,
-              color: AppColors.border,
-            ),
-          ),
-        );
-        firstItem = false;
-      }
-    }
-    return rows;
+      ),
+    );
+  }
+
+  Widget _buildRow(BuildContext context, int index) {
+    final row = _rows[index];
+    final letter = row.letter;
+    if (letter != null) return _buildHeader(letter);
+    return _buildItem(row.value!);
+  }
+
+  Widget _buildHeader(String letter, {Key? key}) {
+    return Container(
+      key: key,
+      width: double.infinity,
+      padding: _headerPadding,
+      color: AppColors.lightGreen,
+      child: Text(letter, style: _headerTextStyle),
+    );
+  }
+
+  Widget _buildItem(String value, {Key? key}) {
+    return ListTile(
+      key: key,
+      onTap: () => context.push(
+        '/browse/results'
+        '?type=${widget.mode.name}'
+        '&value=${Uri.encodeQueryComponent(value)}',
+      ),
+      leading: const Icon(
+        Icons.medication_outlined,
+        color: AppColors.primaryBlue,
+      ),
+      title: Text(
+        value,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: _itemTextStyle,
+      ),
+      trailing: const Icon(
+        Icons.chevron_right_rounded,
+        color: AppColors.border,
+      ),
+    );
   }
 }
 
