@@ -50,8 +50,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } on AuthException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } catch (_) {
+      // Not a rejection and not a transport failure — `AuthApiClient` words
+      // both of those — so the reply did not parse. Blaming the connection for
+      // it would send the user off to debug the wrong thing.
       if (mounted) {
-        setState(() => _error = 'Could not reach the server. Check your connection.');
+        setState(() => _error = 'Sign-in failed. Please try again.');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

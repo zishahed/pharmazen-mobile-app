@@ -903,6 +903,62 @@ symptom pointed at "the sign in page does not connect with the server", but `cur
 never the problem. Checking the server before rewriting the client is what turned a guess into
 a one-line fix.
 
+### Sign-in never sent a request, and the message blamed the network
+
+The next symptom was the one the fix above could not explain: **no account could sign in at
+all**, correct password or not, and the banner read "Could not reach the server. Check your
+connection." The Phase 8 cookie jar was the cause, and it is worth spelling out because
+`cookie_jar`'s default is quietly unusable on Android.
+
+`PersistCookieJar()` takes its storage as a constructor argument. Left unset — which is what
+`ApiClient` did — `FileStorage` falls back to the *relative* path `.cookies/4/ie0_ps1/`, and
+`Directory.current` for an Android process is `/`, which is read-only. Reproduced outside the
+app, from a read-only working directory:
+
+```
+cwd: /tmp/opencode/ro
+loadForRequest THREW: PathAccessException: Creation failed, path = '.cookies' (OS Error: Permission denied, errno = 13)
+```
+
+`loadForRequest` is what `CookieManager.onRequest` calls *before every request*, so the throw
+happened for all of them, and `CookieManager` reports a failed storage as a failed request.
+Nothing was ever sent, and the app had no way to say so. This is the same design-in defect as
+the missing jar in the section above: the code compiles, the type is right, and the tests pass
+because `CookieManager` is not in the path a stubbed adapter exercises.
+
+The fix is `AppCookieStorage`, a `Storage` that resolves `getApplicationSupportDirectory()` and
+hands it to `FileStorage`. `path_provider` answers asynchronously and `FileStorage`'s path
+cannot, so the directory is resolved in `init` — the one storage method the jar already awaits
+before touching the filesystem — which keeps `ApiClient` constructible synchronously. Where no
+directory can be created the storage degrades to a map: the session then ends at restart
+instead of every request failing, which is the recoverable half of that trade.
+
+### `validateStatus` had made every server rejection look like an outage
+
+Fixing the storage is what made sign-in work; it did not explain the message. `baseOptions`
+sets `validateStatus` to 2xx-only so that a 401 reaches `_onError` and can be refreshed — and
+Dio therefore *throws* `DioException.badResponse` for a 401 before `AuthApiClient.login` reaches
+its own `if (response.statusCode != 200)`. That branch was unreachable, and worse, Dio discards
+the error body unless `receiveDataWhenStatusError` is set, so `{"message":"Invalid email or
+password"}` never reached the screen. `login_screen`'s generic `catch` then rendered "Could not
+reach the server" for a rejected password, a rejected file type, and a 500 alike.
+
+The comment above `validateStatus` claimed the opposite ("so callers can read the server's own
+message"), which is the kind of comment that survives review because it is not checked against
+the library. Fixed at both ends:
+
+* `receiveDataWhenStatusError: true`, so the body is on `error.response.data` — the comment now
+  says why it is there;
+* the Dio → domain conversion moved to where the distinction is actually known.
+  `ApiClient.serverMessageOf` / `ApiClient.wasAnswered` answer two questions — did a server say
+  anything, and what did it say — and `AuthApiClient.login`, `PrescriptionApiClient.upload` and
+  `listMine` word the result. "Could not reach the server" is now reachable only when nothing
+  answered at all; each screen's fallback catches an unparseable reply instead and says so.
+
+`ApiClient.baseOptions()` became public for this. `validateStatus` decides whether a rejection
+arrives as a response or an exception, so the auth tests had to build their Dio from the app's
+own options — on Dio's defaults they were testing a configuration the app never runs.
+
 ### Not verified
 
 No request has been sent to the live API. Response shapes and status codes were read from
@@ -911,16 +967,38 @@ backend source, not observed, so a wrong assumption here is entirely possible. U
 * the real multipart round trip, including Cloudinary accepting the compressed bytes;
 * cookie persistence across an app restart, and refresh-on-401 in practice;
 * **two-file uploads.** Two 1.8MB encodes plus multipart overhead is ~3.6MB against the ~4.5MB
-  Vercel ceiling — probably fine, genuinely untested, and the first thing to check.
+  Vercel ceiling — probably fine, genuinely untested, and the first thing to check;
+* a sign-in against a real account. `curl` confirms the endpoint answers
+  `401 {"success":false,"message":"Invalid email or password"}` in ~2s from this machine, so the
+  URL and the deployed route are right, but nothing has exercised the success path end to end —
+  the `Set-Cookie` the jar is now able to persist has only ever come from a stub.
 
 ### Verification
 
-`flutter analyze` clean, 97 tests passing (17 new: 11 compression and DTO parsing, 1 signed-out
-gate, 5 session/Bearer). `flutter build apk --debug` succeeds.
+`flutter analyze` clean, 104 tests passing (24 new since Phase 7: 11 compression and DTO parsing,
+1 signed-out gate, 5 session/Bearer, 7 sign-in and cookie storage). `flutter build apk --debug`
+succeeds.
+
+* `cookie_storage_test.dart` — a jar over `AppCookieStorage` keeps cookies across a *restart*
+  (a second jar over the same directory, nothing carried in memory), because that is the only
+  copy of the refresh token; a directory that cannot be created does not fail `loadForRequest`;
+  a `path_provider` that cannot answer degrades to memory instead of throwing.
+* `auth_session_test.dart` — sign-in completes and the refresh cookie lands in the injected
+  directory, with only the *storage* injected so the jar under test is the app's own
+  composition; a 401 surfaces "Invalid email or password" with status 401 and stores no token;
+  a request that never left the device and one that was rejected are worded differently.
+
+Not passing by accident, both checked by reverting:
+
+* putting `PersistCookieJar()` back as the default fails *persists the refresh cookie in the
+  directory it was given* — no file appears, because the storage it was handed is ignored;
+* restoring the old `login` — status check, no catch — fails both wording tests, one because a
+  `DioException` escapes instead of an `AuthException`, one because the connection message is
+  not the one the screen now depends on.
 
 The login round trip is still unverified against a live account — the tests drive a stubbed
-adapter, not Vercel. What they establish is that the token is stored and attached, which was
-the defect.
+adapter, not Vercel. What they establish is that the token is stored and attached, which was the
+first defect, and that a request actually leaves the device, which was the second.
 
 The unrelated `browse_screen.dart` work and `test/browse_screen_test.dart` remain uncommitted
 and untouched.

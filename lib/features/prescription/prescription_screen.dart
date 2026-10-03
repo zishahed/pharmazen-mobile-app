@@ -210,8 +210,10 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
     } on PrescriptionException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } catch (_) {
+      // `PrescriptionApiClient` words both a rejection and a transport failure,
+      // so reaching here means the reply did not parse.
       if (mounted) {
-        setState(() => _error = 'Upload failed. Check your connection.');
+        setState(() => _error = 'Upload failed. Please try again.');
       }
     } finally {
       if (mounted) setState(() => _submitting = false);

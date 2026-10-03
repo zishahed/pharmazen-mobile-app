@@ -156,17 +156,24 @@ class PrescriptionApiClient {
         'comment': comment.trim(),
     });
 
-    final response = await _api.dio.post<Map<String, dynamic>>(
-      '/prescriptions',
-      data: form,
-      options: Options(
-        // The sync client's 15s timeout is tuned for catalogue reads; a
-        // multipart upload over mobile data needs longer.
-        sendTimeout: const Duration(seconds: 60),
-        receiveTimeout: const Duration(seconds: 60),
-      ),
-    );
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.post<Map<String, dynamic>>(
+        '/prescriptions',
+        data: form,
+        options: Options(
+          // The sync client's 15s timeout is tuned for catalogue reads; a
+          // multipart upload over mobile data needs longer.
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+      );
+    } on DioException catch (error) {
+      throw _asPrescriptionError(error, 'Could not upload the prescription.');
+    }
 
+    // A 2xx that is not the documented 201: `validateStatus` accepts every 2xx,
+    // so this is a real case rather than belt and braces.
     if (response.statusCode != 201) {
       throw PrescriptionException(
         ApiClient.messageOf(response.data) ??
@@ -183,7 +190,16 @@ class PrescriptionApiClient {
   }
 
   Future<List<Prescription>> listMine() async {
-    final response = await _api.dio.get<Map<String, dynamic>>('/prescriptions');
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.get<Map<String, dynamic>>('/prescriptions');
+    } on DioException catch (error) {
+      throw _asPrescriptionError(
+        error,
+        'Could not load your prescriptions.',
+      );
+    }
+
     if (response.statusCode != 200) {
       throw PrescriptionException(
         ApiClient.messageOf(response.data) ?? 'Could not load your prescriptions.',
@@ -195,6 +211,24 @@ class PrescriptionApiClient {
         .map((e) => Prescription.fromJson(e as Map<String, dynamic>))
         .toList(growable: false);
   }
+
+  /// Re-labels a failed request with the operation's own wording.
+  ///
+  /// `ApiClient` throws every non-2xx so that a 401 can be refreshed, which is
+  /// what puts the server's message — the only way to tell a rejected file type
+  /// from a dead network — on the exception instead of on a response. Without
+  /// this the screen's fallback claimed a connectivity problem for every
+  /// rejection.
+  static PrescriptionException _asPrescriptionError(
+    DioException error,
+    String rejected,
+  ) => PrescriptionException(
+    ApiClient.serverMessageOf(error) ??
+        (ApiClient.wasAnswered(error)
+            ? rejected
+            : 'Could not reach the server. Check your connection.'),
+    statusCode: error.response?.statusCode,
+  );
 
   static String _dateOnly(DateTime value) {
     final m = value.month.toString().padLeft(2, '0');

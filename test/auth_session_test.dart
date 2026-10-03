@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -7,13 +8,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pharmazen_mobile_app/data/remote/api_client.dart';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:pharmazen_mobile_app/data/remote/auth_api_client.dart';
+import 'package:pharmazen_mobile_app/data/remote/cookie_storage.dart';
 import 'package:pharmazen_mobile_app/data/remote/token_store.dart';
 
 /// Answers every request with [body] and records what was sent.
 class _StubAdapter implements HttpClientAdapter {
-  _StubAdapter(this.body);
+  _StubAdapter(this.body, {this.status = 200, this.failure, this.setCookie});
 
   final String body;
+  final int status;
+
+  /// When set, the request fails this way instead of being answered — how a
+  /// request that never reached a server reaches a client.
+  final DioExceptionType? failure;
+
+  /// A `Set-Cookie` header value, as the login controller sends for the refresh
+  /// token.
+  final String? setCookie;
+
   final List<RequestOptions> requests = <RequestOptions>[];
 
   @override
@@ -23,11 +35,20 @@ class _StubAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
+    final type = failure;
+    if (type != null) {
+      throw DioException(
+        requestOptions: options,
+        type: type,
+        error: 'Failed host lookup',
+      );
+    }
     return ResponseBody.fromString(
       body,
-      200,
+      status,
       headers: {
         Headers.contentTypeHeader: [Headers.jsonContentType],
+        if (setCookie != null) HttpHeaders.setCookieHeader: [setCookie!],
       },
     );
   }
@@ -57,22 +78,40 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _StubAdapter adapter;
-  late Dio dio;
   late TokenStore tokenStore;
   late ApiClient api;
+  late Directory temp;
+
+  /// An [ApiClient] that answers with [stub].
+  ///
+  /// Built on [ApiClient.baseOptions] rather than a bare Dio: its
+  /// `validateStatus` is what decides whether a rejection arrives as a response
+  /// or as an exception, so a test on Dio's defaults would not run the code path
+  /// the app runs. Leaving [cookieJar] unset is deliberate where the jar itself
+  /// is under test.
+  ApiClient over(
+    _StubAdapter stub, {
+    CookieJar? cookieJar,
+    AppCookieStorage? cookieStorage,
+  }) => ApiClient(
+    dio: Dio(ApiClient.baseOptions())..httpClientAdapter = stub,
+    tokenStore: tokenStore,
+    cookieJar: cookieJar,
+    cookieStorage: cookieStorage,
+  );
 
   setUp(() {
     // Installs an in-memory platform, so TokenStore writes are observable
     // without a device keychain.
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
     adapter = _StubAdapter(_loginBody);
-    dio = Dio()..httpClientAdapter = adapter;
     tokenStore = TokenStore();
-    api = ApiClient(
-      dio: dio,
-      tokenStore: tokenStore,
-      cookieJar: CookieJar(),
-    );
+    api = over(adapter, cookieJar: CookieJar());
+    temp = Directory.systemTemp.createTempSync('pharmazen-auth');
+  });
+
+  tearDown(() {
+    if (temp.existsSync()) temp.deleteSync(recursive: true);
   });
 
   group('login', () {
@@ -101,6 +140,105 @@ void main() {
 
       final sent = adapter.requests.single.data! as Map<String, dynamic>;
       expect(sent['email'], 'nusrat@example.com');
+    });
+
+    test('persists the refresh cookie in the directory it was given', () async {
+      // The refresh token exists only as this cookie, so the jar's storage
+      // location is load-bearing — and `cookie_jar`'s own default is the
+      // read-only relative `.cookies/...` on Android, which stops every request
+      // before it leaves the device. Injecting only the storage means the jar
+      // under test is the app's own composition.
+      adapter = _StubAdapter(
+        _loginBody,
+        setCookie: 'refreshToken=rotating-value; Path=/; Max-Age=604800',
+      );
+      final app = over(
+        adapter,
+        cookieStorage: AppCookieStorage(directory: () async => temp),
+      );
+
+      final user = await AuthApiClient(app).login(
+        email: 'nusrat@example.com',
+        password: 'secret123',
+      );
+
+      expect(user.email, 'nusrat@example.com');
+      // Not "a cookie exists in memory" but "it reached the directory": a silent
+      // fallback to memory would leave the session dying at every restart.
+      expect(
+        temp.listSync().whereType<Directory>(),
+        isNotEmpty,
+        reason: 'the refresh cookie should have been written under $temp',
+      );
+    });
+
+    test('completes when the cookie jar has nowhere to persist', () async {
+      // `CookieManager` reports an unusable jar as a failed request, so a
+      // read-only storage location made sign-in report an unreachable server
+      // having sent nothing. A parent that is a regular file stands in for one,
+      // for any user id.
+      final blocker = File('${temp.path}/not-a-directory')
+        ..writeAsStringSync('');
+      final app = over(
+        adapter,
+        cookieStorage: AppCookieStorage(
+          directory: () async => Directory('${blocker.path}/cookies'),
+        ),
+      );
+
+      final user = await AuthApiClient(app).login(
+        email: 'nusrat@example.com',
+        password: 'secret123',
+      );
+
+      expect(user.email, 'nusrat@example.com');
+      expect(adapter.requests, hasLength(1));
+    });
+  });
+
+  group('a sign-in that does not succeed', () {
+    test('reports what the server said', () async {
+      adapter = _StubAdapter(
+        '{"success":false,"message":"Invalid email or password"}',
+        status: 401,
+      );
+      api = over(adapter, cookieJar: CookieJar());
+
+      await expectLater(
+        AuthApiClient(api).login(
+          email: 'nusrat@example.com',
+          password: 'wrongpass',
+        ),
+        throwsA(
+          isA<AuthException>()
+              .having((e) => e.message, 'message', 'Invalid email or password')
+              .having((e) => e.statusCode, 'statusCode', 401),
+        ),
+        reason:
+            'the controller answers 401 for every failure, so the wording has to '
+            'come from the server: reporting this as a network problem sends '
+            'the user to debug the wrong thing',
+      );
+      expect(await tokenStore.readAccessToken(), isNull);
+    });
+
+    test('says the server was unreachable only when nothing answered', () async {
+      adapter = _StubAdapter('', failure: DioExceptionType.connectionError);
+      api = over(adapter, cookieJar: CookieJar());
+
+      await expectLater(
+        AuthApiClient(api).login(
+          email: 'nusrat@example.com',
+          password: 'secret123',
+        ),
+        throwsA(
+          isA<AuthException>().having(
+            (e) => e.message,
+            'message',
+            contains('Could not reach the server'),
+          ),
+        ),
+      );
     });
   });
 

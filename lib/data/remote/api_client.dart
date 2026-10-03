@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 
 import '../../core/config/api_config.dart';
+import 'cookie_storage.dart';
 import 'token_store.dart';
 
 /// The single authenticated Dio for the app.
@@ -17,22 +18,34 @@ import 'token_store.dart';
 ///   cookie and never appears in a response body. Dio has no built-in cookie
 ///   persistence, so a `PersistCookieJar` backs the interceptor — without it
 ///   every app restart silently loses the ability to refresh and the user is
-///   bounced to the login screen.
+///   bounced to the login screen. The jar's storage is [AppCookieStorage]
+///   because the package default is a relative path, which is read-only on
+///   Android and stops every request before it leaves the device.
 ///
 /// Endpoints under [_unauthenticatedPaths] are sent without a `Bearer` header,
 /// because they are the ones that mint or destroy the token.
+///
+/// [cookieJar] and [cookieStorage] replace the default jar and its storage; the
+/// storage is a seam rather than a convenience, since the directory the package
+/// picks by itself is the read-only one on Android.
 class ApiClient {
-  ApiClient({Dio? dio, TokenStore? tokenStore, CookieJar? cookieJar})
-    : _tokens = tokenStore ?? TokenStore(),
-      _cookies = cookieJar ?? PersistCookieJar() {
-    _dio = dio ?? Dio(_options());
+  ApiClient({
+    Dio? dio,
+    TokenStore? tokenStore,
+    CookieJar? cookieJar,
+    AppCookieStorage? cookieStorage,
+  }) : _tokens = tokenStore ?? TokenStore(),
+       _cookies =
+           cookieJar ??
+           PersistCookieJar(storage: cookieStorage ?? AppCookieStorage()) {
+    _dio = dio ?? Dio(baseOptions());
     _dio.interceptors
       ..add(CookieManager(_cookies))
       ..add(InterceptorsWrapper(onRequest: _onRequest, onError: _onError));
 
     // Refresh runs on a separate Dio with no auth interceptor, so a 401 from the
     // refresh call itself cannot recurse back into another refresh.
-    _refreshDio = Dio(_options());
+    _refreshDio = Dio(baseOptions());
     _refreshDio.interceptors.add(CookieManager(_cookies));
   }
 
@@ -54,12 +67,21 @@ class ApiClient {
     '/auth/logout',
   };
 
-  static BaseOptions _options() => BaseOptions(
+  /// Options shared by the main and the refresh Dio.
+  ///
+  /// Public because they are also the configuration tests have to run against:
+  /// [BaseOptions.validateStatus] decides whether a 401 arrives as a response or
+  /// as an exception, so a test built on Dio's defaults would not exercise the
+  /// path the app takes.
+  static BaseOptions baseOptions() => BaseOptions(
     baseUrl: ApiConfig.apiBaseUrl,
     connectTimeout: ApiConfig.requestTimeout,
     receiveTimeout: ApiConfig.requestTimeout,
-    // Let non-2xx statuses reach the error path instead of throwing inside Dio,
-    // so callers can read the server's own message.
+    // Non-2xx statuses are thrown rather than returned, so a 401 reaches
+    // [_onError] and can be refreshed. The body then only exists on the
+    // exception, and without this it would be discarded before anything could
+    // read the server's own error message.
+    receiveDataWhenStatusError: true,
     validateStatus: (code) => code != null && code >= 200 && code < 300,
   );
 
@@ -150,4 +172,19 @@ class ApiClient {
     final value = body['error'] ?? body['message'];
     return value is String ? value : null;
   }
+
+  /// The server's own wording for a failed request, or null when it sent none.
+  ///
+  /// Because [baseOptions] throws on every non-2xx, the body is only reachable
+  /// through [DioException.response].
+  static String? serverMessageOf(DioException error) =>
+      messageOf(error.response?.data);
+
+  /// True when a server answered at all — any status, including a rejection.
+  ///
+  /// A request that came back with a 401 was rejected; only a request with no
+  /// response never reached the server. Reporting both as a connectivity
+  /// problem blames the network for the user's password, and is what made a
+  /// wrong password look like an outage.
+  static bool wasAnswered(DioException error) => error.response != null;
 }

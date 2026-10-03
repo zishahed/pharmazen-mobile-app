@@ -82,18 +82,22 @@ class AuthApiClient {
     required String email,
     required String password,
   }) async {
-    final response = await _api.dio.post<Map<String, dynamic>>(
-      '/auth/login',
-      data: <String, dynamic>{
-        'email': email.trim(),
-        'password': password,
-      },
-    );
-
-    if (response.statusCode != 200) {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.post<Map<String, dynamic>>(
+        '/auth/login',
+        data: <String, dynamic>{
+          'email': email.trim(),
+          'password': password,
+        },
+      );
+    } on DioException catch (error) {
       throw AuthException(
-        ApiClient.messageOf(response.data) ?? 'Could not sign in. Try again.',
-        statusCode: response.statusCode,
+        ApiClient.serverMessageOf(error) ??
+            (ApiClient.wasAnswered(error)
+                ? 'Could not sign in. Try again.'
+                : 'Could not reach the server. Check your connection.'),
+        statusCode: error.response?.statusCode,
       );
     }
 
@@ -116,8 +120,9 @@ class AuthApiClient {
   /// means the session is genuinely gone.
   Future<AuthUser?> restoreSession() async {
     try {
+      // A non-2xx is thrown before a status can be read here; the catch covers
+      // both "no session" and "no answer", and both mean signed out.
       final response = await _api.dio.get<Map<String, dynamic>>('/auth/me');
-      if (response.statusCode != 200) return null;
       final data = response.data?['data'] as Map<String, dynamic>?;
       return data == null
           ? null
