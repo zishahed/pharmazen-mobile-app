@@ -5,6 +5,7 @@ import '../../app/theme/app_colors.dart';
 import '../../data/providers/medicine_providers.dart';
 import '../../domain/models/medicine.dart';
 import '../../domain/models/medicine_details.dart';
+import '../cart/widgets/add_to_cart_button.dart';
 
 class MedicineDetailScreen extends ConsumerStatefulWidget {
   const MedicineDetailScreen({super.key, required this.medicine});
@@ -55,12 +56,15 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
     final m = widget.medicine;
 
     return Scaffold(
-      appBar: AppBar(title: Text(m.brandName)),
+      appBar: AppBar(
+        title: Text(m.brandName),
+        actions: [AddToCartButton(medicine: m)],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? _buildError()
-              : _buildContent(m),
+          ? _buildError()
+          : _buildContent(m),
     );
   }
 
@@ -69,7 +73,11 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline_rounded, size: 48, color: AppColors.error),
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 48,
+            color: AppColors.error,
+          ),
           const SizedBox(height: 12),
           const Text(
             'Failed to load details.',

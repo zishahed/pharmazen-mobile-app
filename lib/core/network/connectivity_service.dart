@@ -20,8 +20,7 @@ class ConnectivityService {
   final Connectivity _connectivity;
 
   static bool _isOnline(List<ConnectivityResult> results) =>
-      results.isEmpty ||
-      results.any((r) => r != ConnectivityResult.none);
+      results.isEmpty || results.any((r) => r != ConnectivityResult.none);
 
   /// Best-effort current state. Returns true when the platform cannot answer, so
   /// that a failed probe never masquerades as "no network".
@@ -31,6 +30,39 @@ class ConnectivityService {
     } on Object {
       return true;
     }
+  }
+
+  /// The current online state followed by every transition, in both directions.
+  ///
+  /// This is for the UI indicator rather than the sync trigger, so it is
+  /// deliberately not debounced: a user who has just lost signal should see it
+  /// immediately, and the offline state has to stay visible until the network
+  /// actually returns. A platform that cannot answer is reported as online,
+  /// matching [isOnline].
+  Stream<bool> statusChanges() {
+    late final StreamController<bool> controller;
+    StreamSubscription<List<ConnectivityResult>>? subscription;
+
+    controller = StreamController<bool>(
+      onListen: () async {
+        try {
+          subscription = _connectivity.onConnectivityChanged.listen((results) {
+            if (!controller.isClosed) controller.add(_isOnline(results));
+          }, onError: (Object _) {});
+          final current = await _connectivity.checkConnectivity();
+          if (!controller.isClosed) controller.add(_isOnline(current));
+        } on Object {
+          // No plugin available; report the state we cannot observe as online
+          // rather than showing an offline banner that is not true.
+          if (!controller.isClosed) controller.add(true);
+        }
+      },
+      onCancel: () async {
+        await subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   /// Connectivity transitions, debounced by [debounce] to avoid reacting to a

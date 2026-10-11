@@ -90,9 +90,7 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.mode.label),
-      ),
+      appBar: AppBar(title: Text(widget.mode.label)),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),

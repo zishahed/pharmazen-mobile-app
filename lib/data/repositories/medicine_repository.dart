@@ -8,25 +8,25 @@ enum MedicineSearchMode { name, category, generic, indication }
 
 extension MedicineSearchModeX on MedicineSearchMode {
   String get label => switch (this) {
-        MedicineSearchMode.name => 'Browse medicine by name',
-        MedicineSearchMode.category => 'Browse medicine by category',
-        MedicineSearchMode.generic => 'Browse medicine by generic',
-        MedicineSearchMode.indication => 'Browse medicine by indication',
-      };
+    MedicineSearchMode.name => 'Browse medicine by name',
+    MedicineSearchMode.category => 'Browse medicine by category',
+    MedicineSearchMode.generic => 'Browse medicine by generic',
+    MedicineSearchMode.indication => 'Browse medicine by indication',
+  };
 
   String get hint => switch (this) {
-        MedicineSearchMode.name => 'Search medicine names...',
-        MedicineSearchMode.category => 'Search by category or drug class...',
-        MedicineSearchMode.generic => 'Search generic names...',
-        MedicineSearchMode.indication => 'Search by indication, e.g. fever...',
-      };
+    MedicineSearchMode.name => 'Search medicine names...',
+    MedicineSearchMode.category => 'Search by category or drug class...',
+    MedicineSearchMode.generic => 'Search generic names...',
+    MedicineSearchMode.indication => 'Search by indication, e.g. fever...',
+  };
 
   String get browseTitle => switch (this) {
-        MedicineSearchMode.name => 'Search medicine',
-        MedicineSearchMode.category => 'Drug by category',
-        MedicineSearchMode.generic => 'Drug by generic',
-        MedicineSearchMode.indication => 'Drug by Indication',
-      };
+    MedicineSearchMode.name => 'Search medicine',
+    MedicineSearchMode.category => 'Drug by category',
+    MedicineSearchMode.generic => 'Drug by generic',
+    MedicineSearchMode.indication => 'Drug by Indication',
+  };
 }
 
 class MedicineRepository {
@@ -39,7 +39,10 @@ class MedicineRepository {
     if (trimmed.isEmpty) return const [];
 
     final rows = await _db
-        .customSelect(_buildQuery(mode), variables: [Variable.withString('%$trimmed%')])
+        .customSelect(
+          _buildQuery(mode),
+          variables: [Variable.withString('%$trimmed%')],
+        )
         .get();
 
     return rows.map(_toMedicine).toList(growable: false);
@@ -51,10 +54,10 @@ class MedicineRepository {
       MedicineSearchMode.category => 'drug_class',
       MedicineSearchMode.indication => 'indication',
       MedicineSearchMode.name => throw ArgumentError.value(
-          mode,
-          'mode',
-          'Not a browseable search mode.',
-        ),
+        mode,
+        'mode',
+        'Not a browseable search mode.',
+      ),
     };
 
     final rows = await _db.customSelect('''
@@ -85,7 +88,8 @@ class MedicineRepository {
 
   String _buildExactQuery(MedicineSearchMode mode) {
     return switch (mode) {
-      MedicineSearchMode.category => '''
+      MedicineSearchMode.category =>
+        '''
         SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
@@ -95,7 +99,8 @@ class MedicineRepository {
         ORDER BY m.generic_name COLLATE NOCASE ASC,
                 m.brand_name COLLATE NOCASE ASC
       ''',
-      MedicineSearchMode.indication => '''
+      MedicineSearchMode.indication =>
+        '''
         SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
@@ -105,8 +110,9 @@ class MedicineRepository {
         ORDER BY m.generic_name COLLATE NOCASE ASC,
                 m.brand_name COLLATE NOCASE ASC
       ''',
-      _ => '''
-        SELECT brand_id, brand_name, type, slug, dosage_form,
+      _ =>
+        '''
+        SELECT remote_id, brand_id, brand_name, type, slug, dosage_form,
                generic_name, strength, manufacturer,
                package_container, package_size, generic_id, isSensitive
         FROM medicines
@@ -119,27 +125,30 @@ class MedicineRepository {
 
   String _buildQuery(MedicineSearchMode mode) {
     const select = '''
-      SELECT brand_id, brand_name, type, slug, dosage_form, generic_name,
+      SELECT remote_id, brand_id, brand_name, type, slug, dosage_form, generic_name,
              strength, manufacturer, package_container, package_size,
              generic_id, isSensitive
       FROM medicines
     ''';
 
     return switch (mode) {
-      MedicineSearchMode.name => '''
+      MedicineSearchMode.name =>
+        '''
         $select
         WHERE brand_name LIKE ?
         ORDER BY brand_name COLLATE NOCASE ASC
         LIMIT 100
       ''',
-      MedicineSearchMode.generic => '''
+      MedicineSearchMode.generic =>
+        '''
         $select
         WHERE generic_name LIKE ?
         ORDER BY generic_name COLLATE NOCASE ASC,
                 brand_name COLLATE NOCASE ASC
         LIMIT 100
       ''',
-      MedicineSearchMode.category => '''
+      MedicineSearchMode.category =>
+        '''
         SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
@@ -150,7 +159,8 @@ class MedicineRepository {
                 m.brand_name COLLATE NOCASE ASC
         LIMIT 100
       ''',
-      MedicineSearchMode.indication => '''
+      MedicineSearchMode.indication =>
+        '''
         SELECT m.remote_id, m.brand_id, m.brand_name, m.type, m.slug, m.dosage_form,
                m.generic_name, m.strength, m.manufacturer,
                m.package_container, m.package_size, m.generic_id, m.isSensitive
@@ -165,7 +175,9 @@ class MedicineRepository {
   }
 
   Future<MedicineDetails?> fetchDetails(int genericId) async {
-    final rows = await _db.customSelect('''
+    final rows = await _db
+        .customSelect(
+          '''
       SELECT generic_id, generic_name, slug, monograph_link,
              drug_class, indication, indication_description,
              therapeutic_class_description, pharmacology_description,
@@ -177,7 +189,10 @@ class MedicineRepository {
              reconstitution_description, storage_conditions_description
       FROM generics
       WHERE generic_id = ?
-    ''', variables: [Variable.withInt(genericId)]).get();
+    ''',
+          variables: [Variable.withInt(genericId)],
+        )
+        .get();
 
     if (rows.isEmpty) return null;
     final data = rows.single.data;
@@ -190,7 +205,8 @@ class MedicineRepository {
       drugClass: data['drug_class'] as String?,
       indication: data['indication'] as String?,
       indicationDescription: data['indication_description'] as String?,
-      therapeuticClassDescription: data['therapeutic_class_description'] as String?,
+      therapeuticClassDescription:
+          data['therapeutic_class_description'] as String?,
       pharmacologyDescription: data['pharmacology_description'] as String?,
       dosageDescription: data['dosage_description'] as String?,
       administrationDescription: data['administration_description'] as String?,
@@ -202,7 +218,8 @@ class MedicineRepository {
           data['pregnancy_and_lactation_description'] as String?,
       precautionsDescription: data['precautions_description'] as String?,
       pediatricUsageDescription: data['pediatric_usage_description'] as String?,
-      overdoseEffectsDescription: data['overdose_effects_description'] as String?,
+      overdoseEffectsDescription:
+          data['overdose_effects_description'] as String?,
       durationOfTreatmentDescription:
           data['duration_of_treatment_description'] as String?,
       reconstitutionDescription: data['reconstitution_description'] as String?,

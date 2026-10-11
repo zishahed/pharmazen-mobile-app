@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/repositories/medicine_repository.dart';
+import '../cart/cart_providers.dart';
+import '../cart/cart_screen.dart';
 import '../prescription/prescription_screen.dart';
+import '../profile/profile_screen.dart';
+import 'widgets/connectivity_banner.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,39 +24,59 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: switch (_navIndex) {
-          0 => _buildHome(context),
-          3 => const PrescriptionScreen(),
-          _ => _buildPlaceholder(context),
-        },
+        child: Column(
+          children: [
+            const ConnectivityBanner(),
+            Expanded(
+              child: switch (_navIndex) {
+                0 => _buildHome(context),
+                1 => const ProfileScreen(),
+                2 => const CartScreen(),
+                3 => const PrescriptionScreen(),
+                _ => _buildPlaceholder(context),
+              },
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _navIndex,
-        onDestinationSelected: (index) => setState(() => _navIndex = index),
-        backgroundColor: AppColors.surface,
-        indicatorColor: AppColors.lightGreen,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profile',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.shopping_cart_outlined),
-            selectedIcon: Icon(Icons.shopping_cart),
-            label: 'Cart',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.description_outlined),
-            selectedIcon: Icon(Icons.description_rounded),
-            label: 'Prescription',
-          ),
-        ],
+      bottomNavigationBar: Consumer(
+        builder: (context, ref, _) {
+          final count = ref.watch(cartCountProvider);
+          return NavigationBar(
+            selectedIndex: _navIndex,
+            onDestinationSelected: (index) => setState(() => _navIndex = index),
+            backgroundColor: AppColors.surface,
+            indicatorColor: AppColors.lightGreen,
+            destinations: [
+              const NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: 'Home',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded),
+                selectedIcon: Icon(Icons.person_rounded),
+                label: 'Profile',
+              ),
+              NavigationDestination(
+                icon: _CartIcon(
+                  icon: Icons.shopping_cart_outlined,
+                  count: count,
+                ),
+                selectedIcon: _CartIcon(
+                  icon: Icons.shopping_cart,
+                  count: count,
+                ),
+                label: 'Cart',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.description_outlined),
+                selectedIcon: Icon(Icons.description_rounded),
+                label: 'Prescription',
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -66,9 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         RichText(
           text: TextSpan(
-            style: Theme.of(context)
-                .textTheme
-                .headlineMedium
+            style: Theme.of(context).textTheme.headlineMedium
                 ?.copyWith(fontWeight: FontWeight.w800),
             children: const [
               TextSpan(
@@ -164,11 +187,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _navLabel(int index) => switch (index) {
-        0 => 'Home',
-        1 => 'Profile',
-        2 => 'Cart',
-        _ => 'Prescription',
-      };
+    0 => 'Home',
+    1 => 'Profile',
+    2 => 'Cart',
+    _ => 'Prescription',
+  };
+}
+
+class _CartIcon extends StatelessWidget {
+  const _CartIcon({required this.icon, required this.count});
+
+  final IconData icon;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Badge.count(
+      count: count,
+      isLabelVisible: count > 0,
+      child: Icon(icon),
+    );
+  }
 }
 
 class _BrowseTile extends StatelessWidget {

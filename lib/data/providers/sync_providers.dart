@@ -13,9 +13,16 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
   return service;
 });
 
-final syncApiClientProvider = Provider<SyncApiClient>(
-  (ref) => SyncApiClient(),
-);
+/// Live online/offline state for the top-bar indicator.
+///
+/// Distinct from [syncTriggersProvider], which debounces and reacts only to the
+/// offline -> online edge: the indicator has to show both directions, and
+/// without the delay, so it watches the service's status stream directly.
+final connectivityStatusProvider = StreamProvider<bool>((ref) {
+  return ref.watch(connectivityServiceProvider).statusChanges();
+});
+
+final syncApiClientProvider = Provider<SyncApiClient>((ref) => SyncApiClient());
 
 /// The sync engine. Deliberately a plain [Provider], never `autoDispose`: a run
 /// must not be cancelled halfway because the last widget watching it went away,
@@ -43,9 +50,7 @@ final syncTriggersProvider = Provider<void>((ref) {
   unawaited(_ignoreFailures(engine.sync(trigger: SyncTrigger.coldStart)));
 
   final subscription = connectivity.onOnline().listen((_) {
-    unawaited(
-      _ignoreFailures(engine.sync(trigger: SyncTrigger.connectivity)),
-    );
+    unawaited(_ignoreFailures(engine.sync(trigger: SyncTrigger.connectivity)));
   });
   ref.onDispose(subscription.cancel);
 });

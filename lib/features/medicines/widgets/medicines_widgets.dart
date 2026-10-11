@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../domain/models/medicine.dart';
+import '../../cart/widgets/add_to_cart_button.dart';
 
 class MedicineTile extends StatelessWidget {
   const MedicineTile({super.key, required this.medicine, this.onTap});
@@ -41,8 +42,9 @@ class MedicineTile extends StatelessWidget {
               Text(meta, style: const TextStyle(fontSize: 12)),
           ],
         ),
-        isThreeLine: meta.isNotEmpty &&
-            (medicine.genericName?.isNotEmpty ?? false),
+        isThreeLine:
+            meta.isNotEmpty && (medicine.genericName?.isNotEmpty ?? false),
+        trailing: AddToCartButton(medicine: medicine),
       ),
     );
   }
@@ -73,10 +75,7 @@ class MessagePlaceholder extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: AppColors.textSecondary),
           ),
-          if (trailing != null) ...[
-            const SizedBox(height: 4),
-            trailing!,
-          ],
+          if (trailing != null) ...[const SizedBox(height: 4), trailing!],
         ],
       ),
     );
