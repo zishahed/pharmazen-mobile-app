@@ -418,16 +418,50 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Name',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
             TextField(
               controller: _nameController,
               textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Name'),
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Email',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
             TextField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(labelText: 'Email'),
+              decoration: const InputDecoration(
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             Align(
