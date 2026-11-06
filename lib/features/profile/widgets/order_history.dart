@@ -12,7 +12,9 @@ import '../order_providers.dart';
 /// so the most recent day is at the top and the most recent order within a day
 /// is first.
 class OrderHistory extends ConsumerWidget {
-  const OrderHistory({super.key});
+  const OrderHistory({super.key, this.selectedDay});
+
+  final DateTime? selectedDay;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -40,11 +42,22 @@ class OrderHistory extends ConsumerWidget {
             onRetry: () => ref.read(myOrdersProvider.notifier).refresh(),
           ),
           data: (orders) {
-            if (orders.isEmpty) return const _EmptyState();
+            final visibleOrders = selectedDay == null
+                ? orders
+                : orders
+                      .where(
+                        (order) => _isSameDay(order.createdAt, selectedDay!),
+                      )
+                      .toList(growable: false);
+            if (visibleOrders.isEmpty) {
+              return _EmptyState(
+                filtered: selectedDay != null && orders.isNotEmpty,
+              );
+            }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final day in _groupByDay(orders))
+                for (final day in _groupByDay(visibleOrders))
                   _DaySection(day: day.key, orders: day.value),
               ],
             );
@@ -309,7 +322,9 @@ class _Badge extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({this.filtered = false});
+
+  final bool filtered;
 
   @override
   Widget build(BuildContext context) {
@@ -321,22 +336,31 @@ class _EmptyState extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
       ),
-      child: const Column(
+      child: Column(
         children: [
-          Icon(Icons.receipt_long_outlined, size: 36, color: AppColors.border),
-          SizedBox(height: 10),
+          const Icon(
+            Icons.receipt_long_outlined,
+            size: 36,
+            color: AppColors.border,
+          ),
+          const SizedBox(height: 10),
           Text(
-            'No purchases yet',
-            style: TextStyle(
+            filtered ? 'No purchases on this date' : 'No purchases yet',
+            style: const TextStyle(
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
             ),
           ),
-          SizedBox(height: 4),
+          const SizedBox(height: 4),
           Text(
-            'Medicines you order will appear here.',
+            filtered
+                ? 'Try another date or show all purchases.'
+                : 'Medicines you order will appear here.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+            ),
           ),
         ],
       ),
@@ -409,6 +433,13 @@ const _months = [
 
 String _formatDay(DateTime day) =>
     '${_months[day.month - 1]} ${day.day}, ${day.year}';
+
+bool _isSameDay(DateTime first, DateTime second) {
+  final local = first.toLocal();
+  return local.year == second.year &&
+      local.month == second.month &&
+      local.day == second.day;
+}
 
 String _formatTime(DateTime value) {
   final local = value.toLocal();

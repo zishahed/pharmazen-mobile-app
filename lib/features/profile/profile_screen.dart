@@ -6,7 +6,7 @@ import '../../data/remote/auth_api_client.dart';
 import '../auth/auth_providers.dart';
 import '../auth/login_screen.dart';
 import 'order_providers.dart';
-import 'widgets/order_history.dart';
+import 'purchase_history_screen.dart';
 
 /// The Profile tab.
 ///
@@ -101,7 +101,7 @@ class _ProfileView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return RefreshIndicator(
-      onRefresh: user.canReviewPrescriptions
+      onRefresh: user.isAdmin
           ? () async {}
           : () => ref.read(myOrdersProvider.notifier).refresh(),
       child: ListView(
@@ -150,6 +150,16 @@ class _ProfileView extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+          if (!user.isAdmin) ...[
+            _PurchaseHistoryTile(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const PurchaseHistoryScreen(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           Row(
             children: [
               Expanded(
@@ -182,13 +192,62 @@ class _ProfileView extends ConsumerWidget {
             icon: const Icon(Icons.delete_outline_rounded),
             label: const Text('Delete profile'),
           ),
-          SizedBox(height: user.canReviewPrescriptions ? 16 : 20),
-          if (!user.canReviewPrescriptions) ...[
-            const OrderHistory(),
-            const SizedBox(height: 28),
-          ] else
-            const SizedBox(height: 12),
+          const SizedBox(height: 12),
         ],
+      ),
+    );
+  }
+}
+
+class _PurchaseHistoryTile extends StatelessWidget {
+  const _PurchaseHistoryTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.receipt_long_outlined, color: AppColors.primaryBlue),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Purchase history',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'View your orders and purchases',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+            ],
+          ),
+        ),
       ),
     );
   }

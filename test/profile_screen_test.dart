@@ -17,6 +17,14 @@ const _user = AuthUser(
   createdAt: '2025-01-01T00:00:00.000Z',
 );
 
+const _customer = AuthUser(
+  id: '22222222-2222-2222-2222-222222222222',
+  name: 'Nusrat Customer',
+  email: 'customer@example.com',
+  role: 'customer',
+  createdAt: '2025-01-01T00:00:00.000Z',
+);
+
 /// A signed-in controller whose sign-out needs no network.
 class _SignedInAuth extends AuthController {
   @override
@@ -29,6 +37,11 @@ class _SignedInAuth extends AuthController {
 class _SignedOutAuth extends AuthController {
   @override
   AuthState build() => const AuthSignedOut();
+}
+
+class _CustomerAuth extends AuthController {
+  @override
+  AuthState build() => const AuthSignedIn(_customer);
 }
 
 /// Keeps the profile's order history from reaching the network.
@@ -73,6 +86,11 @@ void main() {
     expect(find.text('nusrat@example.com'), findsOneWidget);
     expect(find.text('User ID'), findsNothing);
     expect(find.text('Edit profile'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('Delete profile'),
+      find.byType(ListView),
+      const Offset(0, -200),
+    );
     expect(find.text('Delete profile'), findsOneWidget);
     // The role appears once on the chip and once in the detail list.
     expect(find.text('Pharmacist'), findsNWidgets(2));
@@ -81,14 +99,31 @@ void main() {
     expect(find.textContaining('202'), findsWidgets);
   });
 
-  testWidgets('pharmacist profile does not show purchase history', (
+  testWidgets('pharmacist profile shows purchase history', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(_host(_SignedInAuth.new));
     await tester.pumpAndSettle();
 
-    expect(find.text('Purchase history'), findsNothing);
+    expect(find.text('Purchase history'), findsOneWidget);
     expect(find.text('No purchases yet'), findsNothing);
+  });
+
+  testWidgets('customer opens purchase history page from profile', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_host(_CustomerAuth.new));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Purchase history'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Purchase history'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Purchase history'), findsNWidgets(2));
+    expect(find.text('All purchases'), findsOneWidget);
+    expect(find.text('Choose date'), findsOneWidget);
   });
 
   testWidgets('signing out returns the profile tab to the sign-in form', (
