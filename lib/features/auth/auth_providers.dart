@@ -68,4 +68,19 @@ class AuthController extends Notifier<AuthState> {
     state = const AuthSignedOut();
     await ref.read(authApiClientProvider).logout();
   }
+
+  Future<void> updateProfile({
+    required String name,
+    required String email,
+  }) async {
+    final user = await ref
+        .read(authApiClientProvider)
+        .updateProfile(name: name, email: email);
+    state = AuthSignedIn(user);
+  }
+
+  Future<void> deleteProfile() async {
+    await ref.read(authApiClientProvider).deleteProfile();
+    state = const AuthSignedOut();
+  }
 }

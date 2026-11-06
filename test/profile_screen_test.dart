@@ -63,7 +63,7 @@ void main() {
     expect(find.text('Password'), findsOneWidget);
   });
 
-  testWidgets('signed-in profile shows name, id, email, role and join date', (
+  testWidgets('signed-in profile shows name, email, role and join date', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(_host(_SignedInAuth.new));
@@ -71,7 +71,9 @@ void main() {
 
     expect(find.text('Nusrat Jahan'), findsOneWidget);
     expect(find.text('nusrat@example.com'), findsOneWidget);
-    expect(find.text(_user.id), findsOneWidget);
+    expect(find.text('User ID'), findsNothing);
+    expect(find.text('Edit profile'), findsOneWidget);
+    expect(find.text('Delete profile'), findsOneWidget);
     // The role appears once on the chip and once in the detail list.
     expect(find.text('Pharmacist'), findsNWidgets(2));
 

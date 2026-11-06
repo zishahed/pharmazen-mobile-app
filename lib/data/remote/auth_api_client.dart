@@ -151,4 +151,39 @@ class AuthApiClient {
     }
     await _api.clearSession();
   }
+
+  Future<AuthUser> updateProfile({
+    required String name,
+    required String email,
+  }) async {
+    try {
+      final response = await _api.dio.patch<Map<String, dynamic>>(
+        '/auth/me',
+        data: <String, dynamic>{'name': name.trim(), 'email': email.trim()},
+      );
+      final data = response.data?['data'] as Map<String, dynamic>?;
+      final user = data?['user'] as Map<String, dynamic>?;
+      if (user == null) {
+        throw const AuthException('The server did not return the updated profile.');
+      }
+      return AuthUser.fromJson(user);
+    } on DioException catch (error) {
+      throw AuthException(
+        ApiClient.serverMessageOf(error) ?? 'Could not update your profile.',
+        statusCode: error.response?.statusCode,
+      );
+    }
+  }
+
+  Future<void> deleteProfile() async {
+    try {
+      await _api.dio.delete<Map<String, dynamic>>('/auth/me');
+    } on DioException catch (error) {
+      throw AuthException(
+        ApiClient.serverMessageOf(error) ?? 'Could not delete your profile.',
+        statusCode: error.response?.statusCode,
+      );
+    }
+    await _api.clearSession();
+  }
 }

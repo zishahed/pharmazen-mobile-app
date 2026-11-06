@@ -11,6 +11,8 @@ import 'cart_providers.dart';
 import 'bkash_payment_screen.dart';
 import 'purchase_success_screen.dart';
 
+double _roundMoney(double value) => (value * 100).roundToDouble() / 100;
+
 /// The Cart tab.
 ///
 /// Server-owned: every mutation returns the whole cart, so the list here is
@@ -156,7 +158,17 @@ class _CartScreenState extends ConsumerState<CartScreen> {
 
   Widget _buildCart(List<CartItem> items) {
     final count = items.fold<int>(0, (sum, item) => sum + item.quantity);
-    final total = items.fold<double>(0, (sum, item) => sum + item.subtotal);
+    final subtotal = items.fold<double>(0, (sum, item) => sum + item.subtotal);
+    final auth = ref.read(authProvider);
+    final isPharmacist = auth is AuthSignedIn && auth.user.isPharmacist;
+    final discountRate = isPharmacist
+        ? (subtotal > 1000
+              ? 0.10
+              : subtotal > 500
+              ? 0.05
+              : 0.0)
+        : 0.0;
+    final total = _roundMoney(subtotal * (1 - discountRate));
 
     return SafeArea(
       child: Padding(
@@ -208,7 +220,9 @@ class _CartScreenState extends ConsumerState<CartScreen> {
             const SizedBox(height: 8),
             _Summary(
               count: count,
+              subtotal: subtotal,
               total: total,
+              discountRate: discountRate,
               purchasing: _purchasing,
               onPurchase: _purchase,
             ),
@@ -411,13 +425,17 @@ class _StepButton extends StatelessWidget {
 class _Summary extends StatelessWidget {
   const _Summary({
     required this.count,
+    required this.subtotal,
     required this.total,
+    required this.discountRate,
     required this.purchasing,
     required this.onPurchase,
   });
 
   final int count;
+  final double subtotal;
   final double total;
+  final double discountRate;
   final bool purchasing;
   final VoidCallback onPurchase;
 
@@ -440,7 +458,7 @@ class _Summary extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                _money(total),
+                _money(subtotal),
                 style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
@@ -448,6 +466,25 @@ class _Summary extends StatelessWidget {
               ),
             ],
           ),
+          if (discountRate > 0) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  'Pharmacist discount (${(discountRate * 100).round()}%)',
+                  style: const TextStyle(color: AppColors.primaryGreen),
+                ),
+                const Spacer(),
+                Text(
+                  '-${_money(subtotal - total)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [

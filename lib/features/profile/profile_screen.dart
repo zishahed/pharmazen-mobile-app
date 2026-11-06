@@ -40,6 +40,64 @@ class _ProfileView extends ConsumerWidget {
     }
   }
 
+  Future<void> editProfile(BuildContext context, WidgetRef ref) async {
+    final result = await showDialog<_ProfileFormResult>(
+      context: context,
+      builder: (_) => _EditProfileDialog(user: user),
+    );
+    if (result == null || !context.mounted) return;
+
+    try {
+      await ref
+          .read(authProvider.notifier)
+          .updateProfile(name: result.name, email: result.email);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile updated successfully.')),
+        );
+      }
+    } on AuthException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> _deleteProfile(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete profile?'),
+        content: const Text(
+          'Your profile will be deactivated, but your orders and prescription '
+          'history will be kept for record-keeping. This cannot be undone here.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete profile'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await ref.read(authProvider.notifier).deleteProfile();
+    } on AuthException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return RefreshIndicator(
@@ -72,13 +130,6 @@ class _ProfileView extends ConsumerWidget {
             child: Column(
               children: [
                 _InfoTile(
-                  icon: Icons.badge_outlined,
-                  label: 'User ID',
-                  value: user.id,
-                  selectable: true,
-                ),
-                const _TileDivider(),
-                _InfoTile(
                   icon: Icons.mail_outline_rounded,
                   label: 'Email',
                   value: user.email.isEmpty ? 'Not provided' : user.email,
@@ -98,22 +149,45 @@ class _ProfileView extends ConsumerWidget {
               ],
             ),
           ),
-          SizedBox(height: user.canReviewPrescriptions ? 16 : 36),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => editProfile(context, ref),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Edit profile'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _signOut(context, ref),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: BorderSide(
+                      color: AppColors.error.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Sign out'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: () => _deleteProfile(context, ref),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('Delete profile'),
+          ),
+          SizedBox(height: user.canReviewPrescriptions ? 16 : 20),
           if (!user.canReviewPrescriptions) ...[
             const OrderHistory(),
             const SizedBox(height: 28),
           ] else
             const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: () => _signOut(context, ref),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.error,
-              side: BorderSide(color: AppColors.error.withValues(alpha: 0.4)),
-              minimumSize: const Size.fromHeight(50),
-            ),
-            icon: const Icon(Icons.logout_rounded),
-            label: const Text('Sign out'),
-          ),
         ],
       ),
     );
@@ -182,15 +256,11 @@ class _InfoTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
-    this.selectable = false,
   });
 
   final IconData icon;
   final String label;
   final String value;
-
-  /// A UUID is worth copying, so the id is selectable and monospaced.
-  final bool selectable;
 
   @override
   Widget build(BuildContext context) {
@@ -198,7 +268,6 @@ class _InfoTile extends StatelessWidget {
       fontSize: 14,
       fontWeight: FontWeight.w600,
       color: AppColors.textPrimary,
-      fontFamily: selectable ? 'monospace' : null,
     );
 
     return Padding(
@@ -226,14 +295,99 @@ class _InfoTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                selectable
-                    ? SelectableText(value, style: valueStyle)
-                    : Text(value, style: valueStyle),
+                Text(value, style: valueStyle),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ProfileFormResult {
+  const _ProfileFormResult({required this.name, required this.email});
+
+  final String name;
+  final String email;
+}
+
+class _EditProfileDialog extends StatefulWidget {
+  const _EditProfileDialog({required this.user});
+
+  final AuthUser user;
+
+  @override
+  State<_EditProfileDialog> createState() => _EditProfileDialogState();
+}
+
+class _EditProfileDialogState extends State<_EditProfileDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _emailController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.user.name);
+    _emailController = TextEditingController(text: widget.user.email);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    if (name.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid name and email.')),
+      );
+      return;
+    }
+    Navigator.pop(context, _ProfileFormResult(name: name, email: email));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit profile'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Role: ${_titleCase(widget.user.role)}',
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
     );
   }
 }
