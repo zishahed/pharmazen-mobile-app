@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../app/widgets/skeletons.dart';
 import '../../data/providers/medicine_providers.dart';
 import '../../data/providers/sync_providers.dart';
 import '../../data/sync/sync_engine.dart';
@@ -126,7 +127,7 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const MedicineListSkeleton();
     }
 
     if (_error != null) {

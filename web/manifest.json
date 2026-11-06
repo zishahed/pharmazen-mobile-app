@@ -1,6 +1,6 @@
 {
-    "name": "pharmazen_mobile_app",
-    "short_name": "pharmazen_mobile_app",
+    "name": "Pharmazen",
+    "short_name": "Pharmazen",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_colors.dart';
+import '../../../app/widgets/skeletons.dart';
 import '../../../data/remote/order_api_client.dart';
 import '../order_providers.dart';
 
@@ -34,10 +35,7 @@ class OrderHistory extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
         async.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 32),
-            child: Center(child: CircularProgressIndicator()),
-          ),
+          loading: () => const OrderHistorySkeleton(),
           error: (error, _) => _ErrorState(
             onRetry: () => ref.read(myOrdersProvider.notifier).refresh(),
           ),

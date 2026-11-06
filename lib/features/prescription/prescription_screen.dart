@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../app/widgets/skeletons.dart';
 import '../../data/providers/medicine_providers.dart';
 import '../../data/remote/prescription_api_client.dart';
 import '../../data/repositories/medicine_repository.dart';
@@ -561,10 +562,7 @@ class _PrescriptionList extends ConsumerWidget {
     final async = ref.watch(myPrescriptionsProvider);
 
     return async.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
-      ),
+      loading: () => const MedicineListSkeleton(count: 3, scrollable: false),
       error: (e, _) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Text(

@@ -7,6 +7,7 @@ import '../../data/providers/sync_providers.dart';
 import '../../data/sync/sync_engine.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
+import '../../app/widgets/skeletons.dart';
 import '../medicines/widgets/medicines_widgets.dart';
 
 class BrowseResultsScreen extends ConsumerStatefulWidget {
@@ -79,7 +80,7 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
 
   Widget _buildBody() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const MedicineListSkeleton();
     }
 
     if (_error != null) {

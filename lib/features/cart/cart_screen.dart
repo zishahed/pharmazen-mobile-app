@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../app/widgets/skeletons.dart';
 import '../../data/remote/cart_api_client.dart';
 import '../../data/remote/order_api_client.dart';
 import '../auth/auth_providers.dart';
@@ -128,7 +129,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
 
     final async = ref.watch(cartProvider);
     return async.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const CartSkeleton(),
       error: (_, _) => _CenteredMessage(
         icon: Icons.error_outline_rounded,
         title: 'Could not load your cart',
