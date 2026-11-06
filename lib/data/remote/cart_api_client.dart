@@ -80,6 +80,36 @@ class CartApiClient {
 
   final ApiClient _api;
 
+  /// Resolves the server UUID used by cart writes when a local catalogue row
+  /// predates a sync and therefore has no remote id.
+  Future<String?> findMedicineId(String medicineName) async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/medicines',
+        queryParameters: <String, dynamic>{
+          'search': medicineName.trim(),
+          'limit': 20,
+        },
+      );
+      final medicines = response.data?['data']?['medicines'];
+      if (medicines is! List) return null;
+
+      final wanted = medicineName.trim().toLowerCase();
+      for (final item in medicines.whereType<Map<String, dynamic>>()) {
+        final id = item['id'];
+        final name = item['name'];
+        if (id is String &&
+            name is String &&
+            name.trim().toLowerCase() == wanted) {
+          return id;
+        }
+      }
+      return null;
+    } on DioException {
+      return null;
+    }
+  }
+
   /// The signed-in user's cart.
   Future<List<CartItem>> getCart() async {
     final response = await _send(
@@ -118,6 +148,15 @@ class CartApiClient {
     final response = await _send(
       () => _api.dio.delete<Map<String, dynamic>>('/cart/$medicineId'),
       'Could not remove the medicine.',
+    );
+    return _items(response);
+  }
+
+  /// Clears every line from the signed-in user's cart.
+  Future<List<CartItem>> clear() async {
+    final response = await _send(
+      () => _api.dio.delete<Map<String, dynamic>>('/cart'),
+      'Could not clear your cart.',
     );
     return _items(response);
   }

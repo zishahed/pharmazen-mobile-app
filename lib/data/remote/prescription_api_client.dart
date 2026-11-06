@@ -45,6 +45,9 @@ class Prescription {
     this.consumedQuantity = 0,
     this.remainingQuantity,
     this.fileUrls = const <String>[],
+    this.customerName,
+    this.customerEmail,
+    this.reviewerName,
   });
 
   final String id;
@@ -59,6 +62,13 @@ class Prescription {
   final int maxQuantity;
   final int consumedQuantity;
 
+  /// Present on the pharmacist review endpoints, which join the submitter.
+  final String? customerName;
+  final String? customerEmail;
+
+  /// Present when `getUserPrescriptions` joins the reviewer.
+  final String? reviewerName;
+
   /// Phase 7b. Null only if the server predates the field.
   final int? remainingQuantity;
 
@@ -68,23 +78,37 @@ class Prescription {
   bool get isApproved => status == 'approved' || status == 'verified';
   bool get isRejected => status == 'rejected';
 
-  factory Prescription.fromJson(Map<String, dynamic> json) => Prescription(
-    id: json['id'] as String,
-    medicineId: (json['medicineId'] as String?) ?? '',
-    medicineName: (json['medicineName'] as String?) ?? 'Unknown medicine',
-    startDate: DateTime.parse(json['startDate'] as String),
-    endDate: DateTime.parse(json['endDate'] as String),
-    status: (json['status'] as String?) ?? 'pending',
-    createdAt: DateTime.parse(json['createdAt'] as String),
-    comment: json['comment'] as String?,
-    reviewNote: json['reviewNote'] as String?,
-    maxQuantity: (json['maxQuantity'] as int?) ?? 5,
-    consumedQuantity: (json['consumedQuantity'] as int?) ?? 0,
-    remainingQuantity: json['remainingQuantity'] as int?,
-    fileUrls: (json['files'] as List<dynamic>? ?? const <dynamic>[])
-        .map((f) => (f as Map<String, dynamic>)['fileUrl'] as String)
-        .toList(growable: false),
-  );
+  factory Prescription.fromJson(Map<String, dynamic> json) {
+    final user = json['user'];
+    final reviewer = json['reviewer'];
+    return Prescription(
+      id: json['id'] as String,
+      medicineId: (json['medicineId'] as String?) ?? '',
+      medicineName: (json['medicineName'] as String?) ?? 'Unknown medicine',
+      startDate: DateTime.parse(json['startDate'] as String),
+      endDate: DateTime.parse(json['endDate'] as String),
+      status: (json['status'] as String?) ?? 'pending',
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      comment: json['comment'] as String?,
+      reviewNote: json['reviewNote'] as String?,
+      maxQuantity: (json['maxQuantity'] as int?) ?? 5,
+      consumedQuantity: (json['consumedQuantity'] as int?) ?? 0,
+      remainingQuantity: json['remainingQuantity'] as int?,
+      fileUrls: (json['files'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map((f) => f['fileUrl'] as String)
+          .toList(growable: false),
+      customerName: user is Map<String, dynamic>
+          ? user['name'] as String?
+          : null,
+      customerEmail: user is Map<String, dynamic>
+          ? user['email'] as String?
+          : null,
+      reviewerName: reviewer is Map<String, dynamic>
+          ? reviewer['name'] as String?
+          : null,
+    );
+  }
 }
 
 /// A rejected upload, carrying the server's own wording.
@@ -110,6 +134,36 @@ class PrescriptionApiClient {
   PrescriptionApiClient(this._api);
 
   final ApiClient _api;
+
+  /// Resolves the server UUID used by prescriptions when a local catalogue
+  /// row predates a sync and therefore has no `remoteId`.
+  Future<String?> findMedicineId(String medicineName) async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/medicines',
+        queryParameters: <String, dynamic>{
+          'search': medicineName.trim(),
+          'limit': 20,
+        },
+      );
+      final medicines = response.data?['data']?['medicines'];
+      if (medicines is! List) return null;
+
+      final wanted = medicineName.trim().toLowerCase();
+      for (final item in medicines.whereType<Map<String, dynamic>>()) {
+        final id = item['id'];
+        final name = item['name'];
+        if (id is String &&
+            name is String &&
+            name.trim().toLowerCase() == wanted) {
+          return id;
+        }
+      }
+      return null;
+    } on DioException {
+      return null;
+    }
+  }
 
   /// Compresses and uploads a prescription request.
   ///
@@ -210,6 +264,115 @@ class PrescriptionApiClient {
     return data
         .map((e) => Prescription.fromJson(e as Map<String, dynamic>))
         .toList(growable: false);
+  }
+
+  /// Every prescription still waiting for a pharmacist, newest first.
+  ///
+  /// The request is shared by the whole review team: any pharmacist who opens
+  /// the detail can approve or reject it, and the server removes it from this
+  /// list for everyone once that happens.
+  Future<List<Prescription>> listPending() async {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.get<Map<String, dynamic>>(
+        '/prescriptions/pending',
+      );
+    } on DioException catch (error) {
+      throw _asPrescriptionError(
+        error,
+        'Could not load pending prescriptions.',
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw PrescriptionException(
+        ApiClient.messageOf(response.data) ??
+            'Could not load pending prescriptions.',
+        statusCode: response.statusCode,
+      );
+    }
+    final data = (response.data?['data'] as List<dynamic>?) ?? const <dynamic>[];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(Prescription.fromJson)
+        .toList(growable: false);
+  }
+
+  /// One prescription with its submitter and attachments.
+  Future<Prescription> getById(String id) async {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.get<Map<String, dynamic>>(
+        '/prescriptions/$id',
+      );
+    } on DioException catch (error) {
+      throw _asPrescriptionError(
+        error,
+        'Could not load the prescription.',
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw PrescriptionException(
+        ApiClient.messageOf(response.data) ??
+            'Could not load the prescription.',
+        statusCode: response.statusCode,
+      );
+    }
+    final data = response.data?['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw const PrescriptionException('The server sent an unexpected reply.');
+    }
+    return Prescription.fromJson(data);
+  }
+
+  /// Approves or rejects a pending request.
+  ///
+  /// [reviewNote] is shown to the customer, so a rejection without a reason is
+  /// refused by the server. [maxQuantity] only applies to approvals: it is the
+  /// number of units the prescription may dispense.
+  Future<Prescription> review({
+    required String id,
+    required String status,
+    String? reviewNote,
+    int? maxQuantity,
+  }) async {
+    if (status != 'approved' && status != 'rejected') {
+      throw const PrescriptionException(
+        'Status must be either "approved" or "rejected".',
+      );
+    }
+
+    final note = reviewNote?.trim();
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.put<Map<String, dynamic>>(
+        '/prescriptions/$id/review',
+        data: <String, dynamic>{
+          'status': status,
+          if (note != null && note.isNotEmpty) 'reviewNote': note,
+          'maxQuantity': ?maxQuantity,
+        },
+      );
+    } on DioException catch (error) {
+      throw _asPrescriptionError(
+        error,
+        'Could not submit the review.',
+      );
+    }
+
+    if (response.statusCode != 200) {
+      throw PrescriptionException(
+        ApiClient.messageOf(response.data) ??
+            'Could not submit the review.',
+        statusCode: response.statusCode,
+      );
+    }
+    final data = response.data?['data'] as Map<String, dynamic>?;
+    if (data == null) {
+      throw const PrescriptionException('The server sent an unexpected reply.');
+    }
+    return Prescription.fromJson(data);
   }
 
   /// Re-labels a failed request with the operation's own wording.

@@ -79,6 +79,16 @@ void main() {
     expect(find.textContaining('202'), findsWidgets);
   });
 
+  testWidgets('pharmacist profile does not show purchase history', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_host(_SignedInAuth.new));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Purchase history'), findsNothing);
+    expect(find.text('No purchases yet'), findsNothing);
+  });
+
   testWidgets('signing out returns the profile tab to the sign-in form', (
     WidgetTester tester,
   ) async {
@@ -90,6 +100,7 @@ void main() {
       find.byType(ListView),
       const Offset(0, -200),
     );
+    await tester.ensureVisible(find.text('Sign out'));
     await tester.tap(find.text('Sign out'));
     await tester.pumpAndSettle();
 

@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/remote/cart_api_client.dart';
+import '../../data/remote/order_api_client.dart';
 import '../auth/auth_providers.dart';
+import '../profile/order_providers.dart';
 import 'cart_providers.dart';
+import 'bkash_payment_screen.dart';
+import 'purchase_success_screen.dart';
 
 /// The Cart tab.
 ///
@@ -22,6 +26,7 @@ class CartScreen extends ConsumerStatefulWidget {
 class _CartScreenState extends ConsumerState<CartScreen> {
   /// Lines with a request in flight, so their stepper cannot be double-tapped.
   final _busy = <String>{};
+  bool _purchasing = false;
 
   Future<void> _changeQuantity(CartItem item, int delta) async {
     final next = item.quantity + delta;
@@ -60,6 +65,53 @@ class _CartScreenState extends ConsumerState<CartScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _purchase() async {
+    if (_purchasing) return;
+    setState(() => _purchasing = true);
+    try {
+      final order = await ref.read(myOrdersProvider.notifier).purchaseCart();
+      final payment = await ref
+          .read(orderApiClientProvider)
+          .createPayment(order.id, order.totalAmount);
+      if (!mounted) return;
+      final transactionId = await Navigator.of(context).push<String>(
+        MaterialPageRoute<String>(
+          builder: (_) => BkashPaymentScreen(
+            session: payment,
+            client: ref.read(orderApiClientProvider),
+          ),
+        ),
+      );
+      if (transactionId == null) {
+        _notify('Payment was not completed. Your order is still pending.');
+        return;
+      }
+      // Payment execution marks the order paid and clears the server cart. Keep
+      // this explicit cleanup for older deployed backend revisions.
+      try {
+        await ref.read(cartApiClientProvider).clear();
+      } on CartException catch (error) {
+        // The order already exists at this point; do not make the customer
+        // retry and create a second order just because cleanup was unavailable.
+        _notify('Purchase completed. Cart cleanup failed: ${error.message}');
+      }
+      await ref.read(cartProvider.notifier).refresh();
+      await ref.read(myOrdersProvider.notifier).refresh();
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PurchaseSuccessScreen(orderId: order.id),
+        ),
+      );
+    } on OrderException catch (error) {
+      _notify(error.message);
+    } catch (_) {
+      _notify('Could not complete the purchase. Try again.');
+    } finally {
+      if (mounted) setState(() => _purchasing = false);
+    }
   }
 
   @override
@@ -153,7 +205,12 @@ class _CartScreenState extends ConsumerState<CartScreen> {
               ),
             ),
             const SizedBox(height: 8),
-            _Summary(count: count, total: total),
+            _Summary(
+              count: count,
+              total: total,
+              purchasing: _purchasing,
+              onPurchase: _purchase,
+            ),
           ],
         ),
       ),
@@ -351,10 +408,17 @@ class _StepButton extends StatelessWidget {
 }
 
 class _Summary extends StatelessWidget {
-  const _Summary({required this.count, required this.total});
+  const _Summary({
+    required this.count,
+    required this.total,
+    required this.purchasing,
+    required this.onPurchase,
+  });
 
   final int count;
   final double total;
+  final bool purchasing;
+  final VoidCallback onPurchase;
 
   @override
   Widget build(BuildContext context) {
@@ -420,6 +484,21 @@ class _Summary extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: purchasing ? null : onPurchase,
+              icon: purchasing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.shopping_bag_outlined),
+              label: Text(purchasing ? 'Processing...' : 'Purchase'),
+            ),
           ),
         ],
       ),

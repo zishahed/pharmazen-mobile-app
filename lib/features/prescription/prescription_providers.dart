@@ -31,3 +31,39 @@ class MyPrescriptionsController extends AsyncNotifier<List<Prescription>> {
     );
   }
 }
+
+/// The queue every pharmacist and admin shares.
+///
+/// It watches [authProvider] so signing in as a customer clears it, and signing
+/// in as a pharmacist refetches instead of leaving the previous session's queue
+/// on screen.
+final pendingPrescriptionsProvider =
+    AsyncNotifierProvider<PendingPrescriptionsController, List<Prescription>>(
+      PendingPrescriptionsController.new,
+    );
+
+class PendingPrescriptionsController
+    extends AsyncNotifier<List<Prescription>> {
+  @override
+  Future<List<Prescription>> build() async {
+    final auth = ref.watch(authProvider);
+    if (auth is! AuthSignedIn || !auth.user.canReviewPrescriptions) {
+      return const <Prescription>[];
+    }
+    return ref.read(prescriptionApiClientProvider).listPending();
+  }
+
+  /// Re-fetches after a review, so a decision made on one device disappears
+  /// from every other pharmacist's queue on their next refresh.
+  Future<void> refresh() async {
+    state = await AsyncValue.guard(
+      () => ref.read(prescriptionApiClientProvider).listPending(),
+    );
+  }
+}
+
+/// One request, fetched fresh for the review detail page.
+final prescriptionDetailProvider =
+    FutureProvider.autoDispose.family<Prescription, String>(
+      (ref, id) => ref.watch(prescriptionApiClientProvider).getById(id),
+    );

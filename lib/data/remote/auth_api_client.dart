@@ -24,6 +24,13 @@ class AuthUser {
 
   bool get isCustomer => role == 'customer';
 
+  bool get isPharmacist => role == 'pharmacist';
+
+  bool get isAdmin => role == 'admin';
+
+  /// Pharmacists and admins both pass the backend's review gate.
+  bool get canReviewPrescriptions => isPharmacist || isAdmin;
+
   factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
     id: json['id'] as String,
     name: (json['name'] as String?) ?? '',

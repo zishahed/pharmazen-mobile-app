@@ -104,6 +104,20 @@ class OrderException implements Exception {
   String toString() => message;
 }
 
+class PaymentSession {
+  const PaymentSession({
+    required this.paymentId,
+    required this.bkashUrl,
+    required this.amount,
+    required this.isMock,
+  });
+
+  final String paymentId;
+  final String bkashUrl;
+  final double amount;
+  final bool isMock;
+}
+
 /// Reads and cancels `/api/orders`.
 ///
 /// Authenticated: the endpoint returns whichever user the bearer token belongs
@@ -112,6 +126,77 @@ class OrderApiClient {
   OrderApiClient(this._api);
 
   final ApiClient _api;
+
+  Future<PaymentSession> createPayment(String orderId, double amount) async {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.post<Map<String, dynamic>>(
+        '/payments/create',
+        data: <String, dynamic>{'orderId': orderId, 'amount': amount},
+      );
+    } on DioException catch (error) {
+      throw _asOrderError(error, 'Could not start bKash payment.');
+    }
+
+    final data = response.data?['data'];
+    if (data is! Map<String, dynamic>) {
+      throw const OrderException('The server sent an unexpected payment reply.');
+    }
+    final paymentId = data['paymentId'];
+    final bkashUrl = data['bkashUrl'];
+    if (paymentId is! String || bkashUrl is! String) {
+      throw const OrderException('The payment session is incomplete.');
+    }
+    return PaymentSession(
+      paymentId: paymentId,
+      bkashUrl: bkashUrl,
+      amount: (data['amount'] as num?)?.toDouble() ?? amount,
+      isMock: data['isMock'] as bool? ?? false,
+    );
+  }
+
+  Future<String> executePayment(String paymentId) async {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.post<Map<String, dynamic>>(
+        '/payments/execute',
+        data: <String, dynamic>{'paymentId': paymentId},
+      );
+    } on DioException catch (error) {
+      throw _asOrderError(error, 'Could not complete bKash payment.');
+    }
+    final data = response.data?['data'];
+    if (data is! Map<String, dynamic> || data['success'] != true) {
+      throw OrderException(
+        data is Map<String, dynamic> && data['status'] is String
+            ? data['status'] as String
+            : 'bKash payment was not completed.',
+      );
+    }
+    return (data['transactionId'] as String?) ?? '';
+  }
+
+  /// Creates an order from the signed-in user's cart.
+  Future<Order> purchaseCart() async {
+    final Response<Map<String, dynamic>> response;
+    try {
+      response = await _api.dio.post<Map<String, dynamic>>('/orders');
+    } on DioException catch (error) {
+      throw _asOrderError(error, 'Could not complete the purchase.');
+    }
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw OrderException(
+        ApiClient.messageOf(response.data) ?? 'Could not complete the purchase.',
+        statusCode: response.statusCode,
+      );
+    }
+    final data = response.data?['data'];
+    if (data is! Map<String, dynamic>) {
+      throw const OrderException('The server sent an unexpected reply.');
+    }
+    return Order.fromJson(data);
+  }
 
   /// The signed-in user's orders, newest first (the server orders by `createdAt`
   /// descending).

@@ -43,6 +43,15 @@ class MyOrdersController extends AsyncNotifier<List<Order>> {
     state = await AsyncValue.guard(_fetch);
   }
 
+  Future<Order> purchaseCart() async {
+    final order = await ref.read(orderApiClientProvider).purchaseCart();
+    final current = state.value ?? const <Order>[];
+    state = AsyncData<List<Order>>(
+      [order, ...current].take(orderHistoryMax).toList(growable: false),
+    );
+    return order;
+  }
+
   /// Cancels an order and flips its status in place.
   ///
   /// The list is not refetched: the cancel reply omits the order's items, so a

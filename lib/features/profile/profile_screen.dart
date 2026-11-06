@@ -43,7 +43,9 @@ class _ProfileView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return RefreshIndicator(
-      onRefresh: () => ref.read(myOrdersProvider.notifier).refresh(),
+      onRefresh: user.canReviewPrescriptions
+          ? () async {}
+          : () => ref.read(myOrdersProvider.notifier).refresh(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
@@ -96,9 +98,12 @@ class _ProfileView extends ConsumerWidget {
               ],
             ),
           ),
-          const SizedBox(height: 36),
-          const OrderHistory(),
-          const SizedBox(height: 28),
+          SizedBox(height: user.canReviewPrescriptions ? 16 : 36),
+          if (!user.canReviewPrescriptions) ...[
+            const OrderHistory(),
+            const SizedBox(height: 28),
+          ] else
+            const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: () => _signOut(context, ref),
             style: OutlinedButton.styleFrom(

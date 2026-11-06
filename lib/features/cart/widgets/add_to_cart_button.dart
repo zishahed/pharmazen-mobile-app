@@ -11,8 +11,7 @@ import '../cart_providers.dart';
 /// screen.
 ///
 /// It owns the session and availability checks so every entry point behaves the
-/// same way: an unsynced medicine (no server id) and a signed-out user both get
-/// an explanation rather than a dead button.
+/// same way.
 class AddToCartButton extends ConsumerStatefulWidget {
   const AddToCartButton({super.key, required this.medicine});
 
@@ -26,11 +25,6 @@ class _AddToCartButtonState extends ConsumerState<AddToCartButton> {
   bool _busy = false;
 
   Future<void> _add() async {
-    final remoteId = widget.medicine.remoteId;
-    if (remoteId == null) {
-      _notify('This medicine is not available to order yet.');
-      return;
-    }
     if (ref.read(authProvider) is! AuthSignedIn) {
       _notify('Sign in to add items to your cart.');
       return;
@@ -38,6 +32,17 @@ class _AddToCartButtonState extends ConsumerState<AddToCartButton> {
 
     setState(() => _busy = true);
     try {
+      final cartApi = ref.read(cartApiClientProvider);
+      final remoteId =
+          widget.medicine.remoteId ??
+          await cartApi.findMedicineId(widget.medicine.brandName);
+      if (remoteId == null || remoteId.isEmpty) {
+        _notify(
+          'We could not find this medicine online. Check your connection and '
+          'try again.',
+        );
+        return;
+      }
       await ref.read(cartProvider.notifier).add(remoteId);
       _notify('${widget.medicine.brandName} added to cart.');
     } on CartException catch (error) {

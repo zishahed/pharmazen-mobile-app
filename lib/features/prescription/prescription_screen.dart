@@ -9,6 +9,7 @@ import '../../data/remote/prescription_api_client.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
 import '../auth/auth_providers.dart';
+import 'pharmacist_prescriptions_screen.dart';
 import 'prescription_providers.dart';
 
 /// Prescription tab: submit a request and see past ones.
@@ -69,20 +70,21 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
     if (picked == null || !mounted) return;
 
     if (_files.length >= kMaxUploadFiles) {
-      setState(
-        () => _error = 'You can attach at most $kMaxUploadFiles files.',
-      );
+      setState(() => _error = 'You can attach at most $kMaxUploadFiles files.');
       return;
     }
 
     final bytes = await picked.readAsBytes();
     if (!mounted) return;
     setState(() {
-      _files = [..._files, PrescriptionAttachment(
-        bytes: bytes,
-        filename: picked.name,
-        mediaType: picked.mimeType ?? 'image/jpeg',
-      )];
+      _files = [
+        ..._files,
+        PrescriptionAttachment(
+          bytes: bytes,
+          filename: picked.name,
+          mediaType: picked.mimeType ?? 'image/jpeg',
+        ),
+      ];
       _error = null;
     });
   }
@@ -95,22 +97,25 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
       label: 'Prescription PDF',
       extensions: <String>['pdf'],
     );
-    final picked = await openFile(acceptedTypeGroups: const <XTypeGroup>[group]);
+    final picked = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[group],
+    );
     if (picked == null || !mounted) return;
     if (_files.length >= kMaxUploadFiles) {
-      setState(
-        () => _error = 'You can attach at most $kMaxUploadFiles files.',
-      );
+      setState(() => _error = 'You can attach at most $kMaxUploadFiles files.');
       return;
     }
     final bytes = await picked.readAsBytes();
     if (!mounted) return;
     setState(() {
-      _files = [..._files, PrescriptionAttachment(
-        bytes: bytes,
-        filename: picked.name,
-        mediaType: 'application/pdf',
-      )];
+      _files = [
+        ..._files,
+        PrescriptionAttachment(
+          bytes: bytes,
+          filename: picked.name,
+          mediaType: 'application/pdf',
+        ),
+      ];
       _error = null;
     });
   }
@@ -156,13 +161,6 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
       setState(() => _error = 'Search for and select the medicine.');
       return;
     }
-    if (medicine.remoteId == null) {
-      setState(
-        () => _error =
-            'That medicine has not synced yet. Run a sync, then try again.',
-      );
-      return;
-    }
     if (_files.isEmpty) {
       setState(() => _error = 'Attach a photo or PDF of the prescription.');
       return;
@@ -182,9 +180,20 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
     });
 
     try {
-      await ref.read(prescriptionApiClientProvider).upload(
+      final prescriptionApi = ref.read(prescriptionApiClientProvider);
+      final medicineId =
+          medicine.remoteId ??
+          await prescriptionApi.findMedicineId(medicine.brandName);
+      if (medicineId == null || medicineId.isEmpty) {
+        throw const PrescriptionException(
+          'We could not find this medicine online. Check your connection and '
+          'try again.',
+        );
+      }
+
+      await prescriptionApi.upload(
         files: _files,
-        medicineId: medicine.remoteId!,
+        medicineId: medicineId,
         medicineName: medicine.brandName,
         startDate: start,
         endDate: end,
@@ -203,9 +212,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
       await ref.read(myPrescriptionsProvider.notifier).refresh();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Prescription sent for review.'),
-        ),
+        const SnackBar(content: Text('Prescription sent for review.')),
       );
     } on PrescriptionException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -233,6 +240,13 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen> {
           ),
         ),
       );
+    }
+
+    // A pharmacist does not submit prescriptions from this tab: it becomes the
+    // review queue. Admins share the same gate server-side, so they share the
+    // screen too.
+    if (auth.user.canReviewPrescriptions) {
+      return const PharmacistPrescriptionsScreen();
     }
 
     return RefreshIndicator(
@@ -327,10 +341,8 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.bold,
-        color: AppColors.textPrimary,
-      ),
+      style: Theme.of(context).textTheme.titleMedium
+          ?.copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
     );
   }
 }
@@ -647,11 +659,16 @@ class _PrescriptionTile extends StatelessWidget {
                 ),
               ),
             ],
-            if (p.isRejected && p.reviewNote != null) ...[
+            if (p.reviewNote != null && p.reviewNote!.trim().isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
-                p.reviewNote!,
-                style: const TextStyle(fontSize: 12, color: AppColors.error),
+                'Pharmacist note: ${p.reviewNote!.trim()}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: p.isRejected
+                      ? AppColors.error
+                      : AppColors.textSecondary,
+                ),
               ),
             ],
           ],
@@ -671,8 +688,11 @@ class _ErrorText extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.error_outline_rounded,
-            size: 18, color: AppColors.error),
+        const Icon(
+          Icons.error_outline_rounded,
+          size: 18,
+          color: AppColors.error,
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
