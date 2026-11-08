@@ -80,6 +80,36 @@ class AuthApiClient {
 
   final ApiClient _api;
 
+  Future<AuthUser> register({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final response = await _api.dio.post<Map<String, dynamic>>(
+        '/auth/register',
+        data: <String, dynamic>{
+          'name': name.trim(),
+          'email': email.trim(),
+          'password': password,
+          'role': 'customer',
+        },
+      );
+      final data = response.data?['data'] as Map<String, dynamic>?;
+      final user = data?['user'] as Map<String, dynamic>?;
+      if (user == null) {
+        throw const AuthException('The server did not return the new user.');
+      }
+      return AuthUser.fromJson(user);
+    } on DioException catch (error) {
+      throw AuthException(
+        ApiClient.serverMessageOf(error) ??
+            'Could not create your account. Please try again.',
+        statusCode: error.response?.statusCode,
+      );
+    }
+  }
+
   /// Signs in and persists the access token.
   ///
   /// The controller answers 401 for every failure — including a genuine server

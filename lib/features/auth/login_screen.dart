@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../data/remote/auth_api_client.dart';
 import 'auth_providers.dart';
+import 'registration_screen.dart';
 
 /// Standalone sign-in screen.
 ///
@@ -11,13 +12,15 @@ import 'auth_providers.dart';
 /// [LoginForm] inside the Profile tab instead — there is no auth gate, so the
 /// form has to live somewhere in the shell.
 class LoginScreen extends StatelessWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, this.registrationMessage});
+
+  final String? registrationMessage;
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(child: LoginForm()),
+      body: SafeArea(child: LoginForm(registrationMessage: registrationMessage)),
     );
   }
 }
@@ -29,7 +32,9 @@ class LoginScreen extends StatelessWidget {
 /// navigation call on success: the widget showing it swaps on the auth state,
 /// so a completed sign-in cannot leave the form on screen.
 class LoginForm extends ConsumerStatefulWidget {
-  const LoginForm({super.key});
+  const LoginForm({super.key, this.registrationMessage});
+
+  final String? registrationMessage;
 
   @override
   ConsumerState<LoginForm> createState() => _LoginFormState();
@@ -164,6 +169,23 @@ class _LoginFormState extends ConsumerState<LoginForm> {
                           ),
                         )
                       : const Text('Sign in'),
+                ),
+                const SizedBox(height: 12),
+                if (widget.registrationMessage != null)
+                  Text(
+                    widget.registrationMessage!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.primaryGreen),
+                  ),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => Navigator.of(context).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => const RegistrationScreen(),
+                          ),
+                        ),
+                  child: const Text('New user? Create an account'),
                 ),
               ],
             ),
