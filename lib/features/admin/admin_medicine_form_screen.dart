@@ -292,6 +292,7 @@ class _AdminMedicineFormScreenState extends State<AdminMedicineFormScreen> {
       child: Autocomplete<AdminGeneric>(
         initialValue: TextEditingValue(text: initial),
         displayStringForOption: (option) => option.name,
+        optionsViewOpenDirection: OptionsViewOpenDirection.down,
         optionsBuilder: (value) {
           final query = value.text.toLowerCase();
           return widget.options.generics.where(
@@ -306,6 +307,7 @@ class _AdminMedicineFormScreenState extends State<AdminMedicineFormScreen> {
             TextFormField(
               controller: controller,
               focusNode: focusNode,
+              onTap: focusNode.requestFocus,
               validator: (_) =>
                   _genericId == null ? 'Select a generic name' : null,
               onChanged: (value) {
@@ -314,7 +316,7 @@ class _AdminMedicineFormScreenState extends State<AdminMedicineFormScreen> {
               },
               decoration: const InputDecoration(
                 labelText: 'Generic name',
-                suffixIcon: Icon(Icons.arrow_drop_down_rounded),
+                suffixIcon: Icon(Icons.keyboard_arrow_down_rounded),
               ),
             ),
       ),
