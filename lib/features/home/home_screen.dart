@@ -30,9 +30,9 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: switch (_navIndex) {
                 0 => _buildHome(context),
-                1 => const ProfileScreen(),
-                2 => const CartScreen(),
-                3 => const PrescriptionScreen(),
+                1 => const CartScreen(),
+                2 => const PrescriptionScreen(),
+                3 => const ProfileScreen(),
                 _ => _buildPlaceholder(context),
               },
             ),
@@ -53,11 +53,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 selectedIcon: Icon(Icons.home_rounded),
                 label: 'Home',
               ),
-              const NavigationDestination(
-                icon: Icon(Icons.person_outline_rounded),
-                selectedIcon: Icon(Icons.person_rounded),
-                label: 'Profile',
-              ),
               NavigationDestination(
                 icon: _CartIcon(
                   icon: Icons.shopping_cart_outlined,
@@ -73,6 +68,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icon(Icons.description_outlined),
                 selectedIcon: Icon(Icons.description_rounded),
                 label: 'Prescription',
+              ),
+              const NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded),
+                selectedIcon: Icon(Icons.person_rounded),
+                label: 'Profile',
               ),
             ],
           );
@@ -188,9 +188,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _navLabel(int index) => switch (index) {
     0 => 'Home',
-    1 => 'Profile',
-    2 => 'Cart',
-    _ => 'Prescription',
+    1 => 'Cart',
+    2 => 'Prescription',
+    _ => 'Profile',
   };
 }
 
