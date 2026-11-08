@@ -591,6 +591,16 @@ Four real bugs the tests caught, now fixed:
 One contract change you need to action: I added serverTime to the /api/sync response and documented why in SYNC.md. Advancing the cursor to MAX(updatedAt) instead silently skips any row sharing a timestamp with the final row of the final page — serverTime is the snapshot instant that makes the cursor safe. The client tolerates its absence so Phase 2 can be built incrementally, but take it from the database rather than Date.now().
 Two notes on scope: I did not wire verifyAgainstManifest() into the automatic path — a ~21.7k-row manifest on every sync isn't warranted, and the ~20% count guard that makes tombstoning safe is still Phase 6 work. And I left main.dart free of ProviderScope nesting by using UncontrolledProviderScope, which is what keeps widget_test.dart (which pumps PharmaZenApp with no container) passing. Nothing is committed yet.
 
+### Cart add feedback
+
+The shared `AddToCartButton` now shows a persistent, floating light-green snackbar
+with a circular progress indicator and the message "Adding medicine to your cart"
+immediately when an online cart write starts. It replaces that loading state with
+themed light-green completion or error feedback when the request finishes, instead
+of leaving the user without status or showing the default black snackbar. If the
+user leaves the screen while the write is in flight, the write still completes
+and the loading snackbar is dismissed when the operation finishes.
+
 ---
 
 Phase 1B — enable soft delete: done, committed but not deployed (backend repo, dcef5e7)

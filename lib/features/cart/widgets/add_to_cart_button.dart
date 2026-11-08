@@ -30,7 +30,9 @@ class _AddToCartButtonState extends ConsumerState<AddToCartButton> {
       return;
     }
 
+    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() => _busy = true);
+    _showAddingFeedback(messenger);
     try {
       final cartApi = ref.read(cartApiClientProvider);
       final remoteId =
@@ -50,7 +52,13 @@ class _AddToCartButtonState extends ConsumerState<AddToCartButton> {
     } catch (_) {
       _notify('Could not add to cart. Try again.');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      } else {
+        // The cart write must finish even if the user leaves the screen, but
+        // its loading snackbar must not outlive the route that started it.
+        messenger?.hideCurrentSnackBar();
+      }
     }
   }
 
@@ -58,7 +66,56 @@ class _AddToCartButtonState extends ConsumerState<AddToCartButton> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          backgroundColor: AppColors.lightGreen,
+          elevation: 3,
+          content: Text(
+            message,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+  }
+
+  void _showAddingFeedback(ScaffoldMessengerState? messenger) {
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          duration: Duration(hours: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.fromLTRB(16, 0, 16, 16),
+          backgroundColor: AppColors.lightGreen,
+          elevation: 3,
+          content: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.primaryGreen,
+                ),
+              ),
+              SizedBox(width: 12),
+              Text(
+                'Adding medicine to your cart',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
   }
 
   @override

@@ -9,10 +9,12 @@ class BkashPaymentScreen extends StatefulWidget {
     super.key,
     required this.session,
     required this.client,
+    this.onPaymentConfirmed,
   });
 
   final PaymentSession session;
   final OrderApiClient client;
+  final Future<void> Function()? onPaymentConfirmed;
 
   @override
   State<BkashPaymentScreen> createState() => _BkashPaymentScreenState();
@@ -42,6 +44,9 @@ class _BkashPaymentScreenState extends State<BkashPaymentScreen> {
       final transactionId = await widget.client.executePayment(
         widget.session.paymentId,
       );
+      if (widget.onPaymentConfirmed != null) {
+        await widget.onPaymentConfirmed!();
+      }
       if (mounted) Navigator.of(context).pop(transactionId);
     } on OrderException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -102,6 +107,18 @@ class _BkashPaymentScreenState extends State<BkashPaymentScreen> {
                   ),
                 ),
               ),
+              if (_busy) ...[
+                const SizedBox(height: 12),
+                const LinearProgressIndicator(
+                  color: AppColors.primaryGreen,
+                  backgroundColor: AppColors.lightGreen,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Confirming your purchase...',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 Text(

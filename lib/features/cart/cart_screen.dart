@@ -15,8 +15,8 @@ double _roundMoney(double value) => (value * 100).roundToDouble() / 100;
 
 /// The Cart tab.
 ///
-/// Server-owned: every mutation returns the whole cart, so the list here is
-/// whatever the last reply said rather than a local tally that can drift.
+/// Server-owned: every mutation returns the whole cart. Quantity changes are
+/// applied optimistically and reconciled with the server response.
 /// Signed-out callers see a prompt rather than a fetch, because the endpoint is
 /// authenticated.
 class CartScreen extends ConsumerStatefulWidget {
@@ -84,6 +84,21 @@ class _CartScreenState extends ConsumerState<CartScreen> {
           builder: (_) => BkashPaymentScreen(
             session: payment,
             client: ref.read(orderApiClientProvider),
+            onPaymentConfirmed: () async {
+              // Keep the payment screen visible while the server cart and
+              // local providers catch up, avoiding a flash of stale cart UI.
+              try {
+                await ref.read(cartApiClientProvider).clear();
+              } on CartException catch (error) {
+                if (mounted) {
+                  _notify(
+                    'Purchase completed. Cart cleanup failed: ${error.message}',
+                  );
+                }
+              }
+              await ref.read(cartProvider.notifier).refresh();
+              await ref.read(myOrdersProvider.notifier).refresh();
+            },
           ),
         ),
       );
@@ -91,17 +106,6 @@ class _CartScreenState extends ConsumerState<CartScreen> {
         _notify('Payment was not completed. Your order is still pending.');
         return;
       }
-      // Payment execution marks the order paid and clears the server cart. Keep
-      // this explicit cleanup for older deployed backend revisions.
-      try {
-        await ref.read(cartApiClientProvider).clear();
-      } on CartException catch (error) {
-        // The order already exists at this point; do not make the customer
-        // retry and create a second order just because cleanup was unavailable.
-        _notify('Purchase completed. Cart cleanup failed: ${error.message}');
-      }
-      await ref.read(cartProvider.notifier).refresh();
-      await ref.read(myOrdersProvider.notifier).refresh();
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(

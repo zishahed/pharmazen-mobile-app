@@ -42,10 +42,28 @@ class CartController extends AsyncNotifier<List<CartItem>> {
     );
   }
 
+  /// Updates the visible quantity immediately, then reconciles it with the
+  /// server response or restores the previous value if the write fails.
   Future<void> setQuantity(String medicineId, int quantity) async {
-    state = AsyncData(
-      await ref.read(cartApiClientProvider).setQuantity(medicineId, quantity),
-    );
+    final previous = state.value;
+    if (previous != null) {
+      state = AsyncData([
+        for (final item in previous)
+          if (item.medicineId == medicineId)
+            item.copyWith(quantity: quantity)
+          else
+            item,
+      ]);
+    }
+
+    try {
+      state = AsyncData(
+        await ref.read(cartApiClientProvider).setQuantity(medicineId, quantity),
+      );
+    } catch (error) {
+      if (previous != null) state = AsyncData(previous);
+      rethrow;
+    }
   }
 
   Future<void> remove(String medicineId) async {
