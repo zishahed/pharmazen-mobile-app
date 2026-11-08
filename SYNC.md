@@ -1046,3 +1046,94 @@ against the real asset: a far jump lands exactly on the section header (expected
 from measured row heights rather than from the implementation's own arithmetic), a 1,000+ value
 list builds fewer than 60 rows, a far jump is at its final offset with no pump at all, and a
 neighbouring letter animates.
+
+## 2026-11-06 — Profile, orders, payments, and pharmacist purchasing
+
+This entry records the mobile and backend work completed today. The mobile app is in
+`pharmazen_mobile_app`; the backend changes are in the sibling `pharmazen-backend` project.
+
+### Profile editing and account lifecycle
+
+* Added profile editing for the user's name and email.
+* The role remains read-only and cannot be changed through the profile form.
+* Added profile soft deletion. Deleting a profile sets `users.is_active` to `false`,
+  revokes refresh tokens, and preserves orders, prescriptions, and purchase history.
+* Login and refresh reject inactive accounts.
+* Removed the User ID card from the profile page.
+* Added Edit profile, Sign out, and Delete profile actions.
+* Fixed the edit-profile dialog labels: `Name` and `Email` are now separate labels above
+  their outlined fields, with spacing that keeps them clear of the input borders.
+
+Backend files involved:
+
+* `src/modules/auth/auth.routes.js`
+* `src/modules/auth/auth.controller.js`
+* `src/modules/auth/auth.service.js`
+* `prisma/schema.prisma`
+* `prisma/migrations/20261106140000_add_user_is_active/migration.sql`
+
+The `is_active` migration was applied to the configured Neon `neondb` database. The database
+was an existing production schema without Prisma migration history, so the column was applied
+with `prisma db execute` and the migration was then recorded with
+`prisma migrate resolve --applied`. `prisma migrate status` reports the database is up to date.
+
+### Pharmacist ordering and discounts
+
+* Pharmacists can purchase medicines from the cart.
+* Pharmacists receive a 5% discount when the subtotal is strictly greater than 500 taka.
+* Pharmacists receive a 10% discount when the subtotal is strictly greater than 1,000 taka.
+* Customers and admins receive no pharmacist discount.
+* The discount is calculated and enforced by the backend, not only displayed by the app.
+* Discounted line prices and the order total use consistent two-decimal rounding.
+* The cart displays the original subtotal, discount percentage, discount amount, and final total.
+* The order response includes `subtotal` and `discountRate`.
+* Inactive accounts cannot create orders.
+
+The order and payment services were syntax-checked, and Prisma Client was regenerated after
+schema changes.
+
+### Payment and cart completion
+
+* Connected the mobile purchase flow to the backend bKash payment session and execution flow.
+* Payment success updates the payment and order to paid, decrements stock, and clears the cart.
+* Temporary payment transaction IDs use unique `pending_<UUID>` values, avoiding the unique
+  `transaction_id` conflict during payment-session creation and retries.
+* Payment amount validation uses the server-created discounted order total.
+* The mobile client performs compatibility cart cleanup after a confirmed payment and refreshes
+  both cart and order-history state.
+* Added the animated purchase-success screen, shown only after payment confirmation.
+
+### Purchase-history page
+
+* Added a clickable Purchase history card below Member since and above Edit profile and Sign out.
+* Customers and pharmacists can open the purchase-history page; admins do not see the card.
+* Added a dedicated `PurchaseHistoryScreen`.
+* Added calendar date selection with previous-day and next-day navigation.
+* Added an all-purchases mode and a clear-date action.
+* Added date-filtered empty states when no order exists for the selected date.
+* Reused the order-history cards, cancellation behavior, retry state, pull-to-refresh, and
+  animated skeleton loading UI.
+* Pharmacists' profile refresh now also refreshes their order history because pharmacists can buy.
+
+Mobile files involved:
+
+* `lib/features/profile/profile_screen.dart`
+* `lib/features/profile/purchase_history_screen.dart`
+* `lib/features/profile/widgets/order_history.dart`
+* `lib/features/profile/order_providers.dart`
+* `lib/features/cart/cart_screen.dart`
+* `lib/data/remote/order_api_client.dart`
+
+### Verification
+
+The following checks passed after today's changes:
+
+* `flutter analyze`
+* Profile widget tests
+* Cart tests
+* Order-history and purchase-history tests
+* Backend `node --check` for order and payment services
+* `npx prisma validate`
+* `npx prisma generate`
+* `prisma migrate status` — database schema up to date
+* `git diff --check`
