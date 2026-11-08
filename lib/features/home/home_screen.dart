@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../data/providers/sync_providers.dart';
 import '../../data/repositories/medicine_repository.dart';
+import '../../data/sync/sync_engine.dart';
 import '../admin/admin_dashboard_screen.dart';
 import '../cart/cart_providers.dart';
 import '../cart/cart_screen.dart';
@@ -285,12 +287,57 @@ class _BrowseTile extends StatelessWidget {
   }
 }
 
-class _Header extends StatelessWidget {
+class _Header extends ConsumerStatefulWidget {
   const _Header();
 
   @override
+  ConsumerState<_Header> createState() => _HeaderState();
+}
+
+class _HeaderState extends ConsumerState<_Header>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _rotation;
+  late final SyncEngine _engine;
+
+  @override
+  void initState() {
+    super.initState();
+    _rotation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _engine = ref.read(syncEngineProvider);
+    _engine.syncActivity.addListener(_syncChanged);
+    _syncChanged();
+  }
+
+  void _syncChanged() {
+    if (!mounted) return;
+    final syncing = _engine.syncActivity.value;
+    if (syncing) {
+      _rotation.repeat();
+    } else {
+      _rotation.stop();
+    }
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _engine.syncActivity.removeListener(_syncChanged);
+    _rotation.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sync() async {
+    await _engine.sync(trigger: SyncTrigger.manual);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final syncing = _engine.syncActivity.value;
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         RichText(
           text: const TextSpan(
@@ -306,6 +353,14 @@ class _Header extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        OutlinedButton.icon(
+          onPressed: syncing ? null : _sync,
+          icon: RotationTransition(
+            turns: _rotation,
+            child: const Icon(Icons.sync_rounded),
+          ),
+          label: const Text('SYNC'),
         ),
       ],
     );

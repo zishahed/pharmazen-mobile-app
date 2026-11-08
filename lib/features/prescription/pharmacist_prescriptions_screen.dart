@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_colors.dart';
+import '../../app/widgets/skeletons.dart';
 import '../../data/remote/prescription_api_client.dart';
 import 'prescription_providers.dart';
 import 'prescription_review_screen.dart';
@@ -28,9 +29,8 @@ class PharmacistPrescriptionsScreen extends ConsumerWidget {
 
     await ref.read(pendingPrescriptionsProvider.notifier).refresh();
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -38,9 +38,10 @@ class PharmacistPrescriptionsScreen extends ConsumerWidget {
     final async = ref.watch(pendingPrescriptionsProvider);
 
     return RefreshIndicator(
-      onRefresh: () => ref.read(pendingPrescriptionsProvider.notifier).refresh(),
+      onRefresh: () =>
+          ref.read(pendingPrescriptionsProvider.notifier).refresh(),
       child: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const _ReviewQueueSkeleton(),
         error: (error, _) => ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(24),
@@ -120,6 +121,66 @@ class PharmacistPrescriptionsScreen extends ConsumerWidget {
   }
 }
 
+class _ReviewQueueSkeleton extends StatelessWidget {
+  const _ReviewQueueSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+      children: const [
+        Row(
+          children: [
+            Expanded(child: SkeletonBox(width: double.infinity, height: 24)),
+            SizedBox(width: 16),
+            SkeletonBox(width: 72, height: 28, radius: 999),
+          ],
+        ),
+        SizedBox(height: 8),
+        SkeletonBox(width: 260, height: 13),
+        SizedBox(height: 20),
+        _ReviewSkeletonCard(),
+        SizedBox(height: 12),
+        _ReviewSkeletonCard(),
+        SizedBox(height: 12),
+        _ReviewSkeletonCard(),
+      ],
+    );
+  }
+}
+
+class _ReviewSkeletonCard extends StatelessWidget {
+  const _ReviewSkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      child: Padding(
+        padding: EdgeInsets.all(14),
+        child: Row(
+          children: [
+            SkeletonBox(width: 44, height: 44, radius: 22),
+            SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SkeletonBox(width: 170, height: 16),
+                  SizedBox(height: 8),
+                  SkeletonBox(width: 220, height: 12),
+                  SizedBox(height: 6),
+                  SkeletonBox(width: 130, height: 12),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CountBadge extends StatelessWidget {
   const _CountBadge({required this.count});
 
@@ -154,11 +215,7 @@ class _EmptyQueue extends StatelessWidget {
       padding: const EdgeInsets.only(top: 64),
       child: Column(
         children: const [
-          Icon(
-            Icons.task_alt_rounded,
-            size: 56,
-            color: AppColors.border,
-          ),
+          Icon(Icons.task_alt_rounded, size: 56, color: AppColors.border),
           SizedBox(height: 14),
           Text(
             'No pending prescriptions to review.',
@@ -245,9 +302,7 @@ class _PendingCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      patient == null || patient.isEmpty
-                          ? 'Customer'
-                          : patient,
+                      patient == null || patient.isEmpty ? 'Customer' : patient,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -266,8 +321,7 @@ class _PendingCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     _MetaLine(
                       icon: Icons.event_outlined,
-                      text:
-                          '${_fmtDate(p.startDate)} - ${_fmtDate(p.endDate)}',
+                      text: '${_fmtDate(p.startDate)} - ${_fmtDate(p.endDate)}',
                     ),
                     const SizedBox(height: 3),
                     _MetaLine(

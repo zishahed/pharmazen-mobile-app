@@ -35,9 +35,10 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
       _error = null;
     });
     try {
-      final details = await ref
-          .read(medicineRepositoryProvider)
-          .fetchDetails(widget.medicine.genericId!);
+      final genericId = widget.medicine.genericId;
+      final details = genericId == null
+          ? null
+          : await ref.read(medicineRepositoryProvider).fetchDetails(genericId);
       if (!mounted) return;
       setState(() {
         _details = details;
@@ -101,6 +102,7 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
         _buildMetaRow(m),
         const SizedBox(height: 24),
         if (_details != null) ..._buildSections(),
+        if (_details == null) const _NoMonographDetails(),
       ],
     );
   }
@@ -284,6 +286,23 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
         content: d.storageConditionsDescription,
       ),
     ].where((w) => w.hasContent).toList();
+  }
+}
+
+class _NoMonographDetails extends StatelessWidget {
+  const _NoMonographDetails();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Text(
+          'Detailed monograph information is not available for this medicine yet.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+      ),
+    );
   }
 }
 

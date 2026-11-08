@@ -182,7 +182,11 @@ void main() {
       await withCatalog((db) async {
         final notFound = _FakeAdapter([_Failure('nope', statusCode: 404)]);
         await _engine(db, notFound).sync();
-        expect(notFound.requests, hasLength(1), reason: '404 is a real answer');
+        expect(
+          notFound.requests,
+          hasLength(2),
+          reason: 'the missing recent endpoint falls back to the delta endpoint',
+        );
 
         final boom = _FakeAdapter([_Failure('boom', statusCode: 500)]);
         await _engine(db, boom).sync();

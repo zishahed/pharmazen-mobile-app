@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../../core/config/api_config.dart';
 import '../db/app_database.dart';
 import '../remote/sync_api_client.dart';
@@ -96,6 +98,9 @@ class SyncEngine {
 
   Future<SyncOutcome>? _inFlight;
   DateTime? _lastAttemptAt;
+  final ValueNotifier<bool> _syncing = ValueNotifier<bool>(false);
+
+  ValueListenable<bool> get syncActivity => _syncing;
 
   /// Coalesces concurrent calls onto one run. The second caller receives the
   /// first run's outcome instead of starting a competing one.
@@ -103,9 +108,11 @@ class SyncEngine {
     final existing = _inFlight;
     if (existing != null) return existing;
 
+    _syncing.value = true;
     final run = _guardedSync(trigger);
     _inFlight = run;
     return run.whenComplete(() {
+      _syncing.value = false;
       if (identical(_inFlight, run)) _inFlight = null;
     });
   }
@@ -125,36 +132,50 @@ class SyncEngine {
     }
     _lastAttemptAt = _clock();
 
-    final since = await db.readSyncState('last_success_at');
+    final storedSince = await db.readSyncState('last_success_at');
+    final initialWindows = storedSince == null
+        ? const [7, 30, 180]
+        : const <int>[];
     var pages = 0;
     var totals = SyncApplyResult.empty;
 
     try {
-      String? cursor;
       var sawFullResync = false;
       String? serverTime;
       var newestUpdatedAt = '';
+      final windows = initialWindows.isEmpty ? <int?>[null] : initialWindows;
 
-      do {
-        final page = await client.fetchDelta(since: since, cursor: cursor);
-        pages++;
+      for (final days in windows) {
+        String? cursor;
+        var windowMedicineRows = 0;
+        do {
+          final page = days == null
+              ? await client.fetchDelta(since: storedSince, cursor: cursor)
+              : await client.fetchRecent(days: days, cursor: cursor);
+          pages++;
+          windowMedicineRows += page.medicines.length;
 
-        // Only the first page can legitimately declare a full resync; the server
-        // decides that from `since` before it starts paging. Honouring it later
-        // would discard pages already applied.
-        if (page.isFullResync && pages == 1) {
-          await _applier.resetForFullResync();
-          sawFullResync = true;
-        }
+          // Only the first page can legitimately declare a full resync; the server
+          // decides that from `since` before it starts paging. Honouring it later
+          // would discard pages already applied.
+          if (page.isFullResync && pages == 1) {
+            await _applier.resetForFullResync();
+            sawFullResync = true;
+          }
 
-        totals += await _applier.apply(page);
-        if (page.serverTime != null) serverTime = page.serverTime;
-        newestUpdatedAt = _newer(newestUpdatedAt, page.medicines);
-        cursor = page.nextCursor;
-      } while (cursor != null && cursor.isNotEmpty);
+          totals += await _applier.apply(page);
+          if (page.serverTime != null) serverTime = page.serverTime;
+          newestUpdatedAt = _newer(newestUpdatedAt, page.medicines);
+          cursor = page.nextCursor;
+        } while (cursor != null && cursor.isNotEmpty);
+
+        if (initialWindows.isEmpty || windowMedicineRows > 0) break;
+      }
 
       // Reached only after every page committed.
-      await _writeCursor(_resolveCursor(since, serverTime, newestUpdatedAt));
+      await _writeCursor(
+        _resolveCursor(storedSince, serverTime, newestUpdatedAt),
+      );
 
       // Repair runs after the cursor lands so it is comparing the catalogue the
       // delta just finished updating. A failure here leaves the cursor intact and
@@ -255,7 +276,9 @@ class SyncEngine {
   /// for deletion.
   Future<SyncDriftReport> verifyAgainstManifest() async {
     final manifest = await client.fetchManifest();
-    final baseline = int.tryParse((await db.readSyncState('last_manifest_count')) ?? '');
+    final baseline = int.tryParse(
+      (await db.readSyncState('last_manifest_count')) ?? '',
+    );
 
     if (manifest.notModified) {
       return const SyncDriftReport(
@@ -305,7 +328,9 @@ class SyncEngine {
       }
     }
 
-    final missingRemotely = remote.keys.where((id) => !localIds.contains(id)).length;
+    final missingRemotely = remote.keys
+        .where((id) => !localIds.contains(id))
+        .length;
 
     return SyncDriftReport(
       remoteCount: remote.length,
@@ -371,7 +396,9 @@ class SyncEngine {
 
     if (!report.isManifestTrustworthy) return report;
 
-    final tombstoned = await _applier.tombstoneMissingLocally(report.missingLocallyIds);
+    final tombstoned = await _applier.tombstoneMissingLocally(
+      report.missingLocallyIds,
+    );
     if (tombstoned != report.missingLocally) {
       throw StateError(
         'Tombstoned $tombstoned of ${report.missingLocally} rows the manifest '
@@ -395,7 +422,10 @@ class SyncEngine {
       if (remoteCount != null) {
         await db.writeSyncState('last_manifest_count', '$remoteCount');
       }
-      await db.writeSyncState('last_manifest_at', _clock().toUtc().toIso8601String());
+      await db.writeSyncState(
+        'last_manifest_at',
+        _clock().toUtc().toIso8601String(),
+      );
     });
   }
 }
@@ -440,7 +470,8 @@ class SyncDriftReport {
   final List<String> missingLocallyIds;
   final List<String> mismatchedIds;
 
-  bool get isClean => missingLocally == 0 && missingRemotely == 0 && mismatched == 0;
+  bool get isClean =>
+      missingLocally == 0 && missingRemotely == 0 && mismatched == 0;
 
   /// True once a manifest count has been recorded, so a size change has something
   /// to be measured against.

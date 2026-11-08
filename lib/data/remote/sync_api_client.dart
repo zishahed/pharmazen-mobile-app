@@ -45,10 +45,10 @@ class SyncApiClient {
                connectTimeout: ApiConfig.requestTimeout,
                receiveTimeout: ApiConfig.requestTimeout,
                sendTimeout: ApiConfig.requestTimeout,
-// Status codes are inspected explicitly in _send so that a 5xx can
-                // be retried with backoff instead of being thrown at us as a
-                // badResponse, which is classified as permanent.
-                validateStatus: (status) => status != null && status < 600,
+               // Status codes are inspected explicitly in _send so that a 5xx can
+               // be retried with backoff instead of being thrown at us as a
+               // badResponse, which is classified as permanent.
+               validateStatus: (status) => status != null && status < 600,
                headers: const {'Accept': 'application/json'},
              ),
            );
@@ -65,10 +65,13 @@ class SyncApiClient {
   /// One page of the `?since=` delta. [since] is the cursor string handed back
   /// by the previous successful run; [cursor] continues a page sequence.
   Future<SyncDeltaPage> fetchDelta({String? since, String? cursor}) async {
-    final response = await _get('/sync', query: {
-      if (since != null && since.isNotEmpty) 'since': since,
-      if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
-    });
+    final response = await _get(
+      '/sync',
+      query: {
+        if (since != null && since.isNotEmpty) 'since': since,
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+      },
+    );
 
     _requireOk(response, '/api/sync');
 
@@ -76,6 +79,36 @@ class SyncApiClient {
     if (data is! Map<String, dynamic>) {
       throw SyncProtocolException(
         'Expected a JSON object from /api/sync, got ${data.runtimeType}.',
+      );
+    }
+    return SyncDeltaPage.fromJson(data);
+  }
+
+  /// Fetches medicines created within a bounded recent window. This is used
+  /// only when a device has no sync cursor, avoiding a full-catalogue download.
+  Future<SyncDeltaPage> fetchRecent({required int days, String? cursor}) async {
+    final response = await _get(
+      '/sync/recent',
+      query: {
+        'days': '$days',
+        if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
+      },
+    );
+    if (response.statusCode == 404) {
+      // Older deployments do not have the bounded endpoint yet. The delta
+      // fallback keeps existing installations usable until the backend rolls
+      // out, while the deployed endpoint remains creation-time accurate.
+      final cutoff = DateTime.now()
+          .toUtc()
+          .subtract(Duration(days: days))
+          .toIso8601String();
+      return fetchDelta(since: cutoff, cursor: cursor);
+    }
+    _requireOk(response, '/api/sync/recent');
+    final data = response.data;
+    if (data is! Map<String, dynamic>) {
+      throw SyncProtocolException(
+        'Expected a JSON object from /api/sync/recent, got ${data.runtimeType}.',
       );
     }
     return SyncDeltaPage.fromJson(data);
@@ -144,11 +177,13 @@ class SyncApiClient {
     required Map<String, String> query,
     Map<String, String>? headers,
   }) {
-    return _send(() => _dio.get<dynamic>(
-      path,
-      queryParameters: query.isEmpty ? null : query,
-      options: headers == null ? null : Options(headers: headers),
-    ));
+    return _send(
+      () => _dio.get<dynamic>(
+        path,
+        queryParameters: query.isEmpty ? null : query,
+        options: headers == null ? null : Options(headers: headers),
+      ),
+    );
   }
 
   /// Retries transport failures, 408/429 and 5xx with exponential backoff and
@@ -174,7 +209,9 @@ class SyncApiClient {
 
         // Honour Retry-After when the server sends it, capped so a hostile or
         // mistaken value cannot park the sync lock for an hour.
-        final retryAfter = _parseRetryAfter(response.headers.value('retry-after'));
+        final retryAfter = _parseRetryAfter(
+          response.headers.value('retry-after'),
+        );
         if (retryAfter != null) {
           await _sleep(retryAfter);
           continue;
@@ -185,8 +222,9 @@ class SyncApiClient {
       }
 
       final backoff = ApiConfig.retryBaseDelay * (1 << i);
-      await _sleep(Duration(microseconds: (backoff.inMicroseconds * _jitter())
-          .round()));
+      await _sleep(
+        Duration(microseconds: (backoff.inMicroseconds * _jitter()).round()),
+      );
     }
 
     throw SyncNetworkException(

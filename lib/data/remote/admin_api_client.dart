@@ -74,26 +74,45 @@ class AdminMedicine {
     required this.id,
     required this.name,
     required this.description,
+    required this.genericName,
     required this.categoryId,
     required this.price,
     required this.stockQuantity,
     required this.expiryDate,
     required this.requiresPrescription,
+    required this.genericId,
+    required this.slug,
+    required this.type,
+    required this.dosageForm,
+    required this.strength,
+    required this.manufacturer,
+    required this.packageContainer,
+    required this.packageSize,
   });
 
   final String id;
   final String name;
   final String? description;
+  final String? genericName;
   final String categoryId;
   final num price;
   final int stockQuantity;
   final DateTime? expiryDate;
   final bool requiresPrescription;
+  final int? genericId;
+  final String? slug;
+  final String? type;
+  final String? dosageForm;
+  final String? strength;
+  final String? manufacturer;
+  final String? packageContainer;
+  final String? packageSize;
 
   factory AdminMedicine.fromJson(Map<String, dynamic> json) => AdminMedicine(
     id: json['id'] as String,
     name: (json['name'] as String?) ?? '',
     description: json['description'] as String?,
+    genericName: _descriptionPart(json['description'], 0),
     categoryId: (json['categoryId'] as String?) ?? '',
     price: json['price'] is num
         ? json['price'] as num
@@ -106,7 +125,23 @@ class AdminMedicine {
         json['isSensitive'] as bool? ??
         json['requiresPrescription'] as bool? ??
         false,
+    genericId: _nullableInt(json['genericId']),
+    slug: _nullableString(json['slug']),
+    type: _nullableString(json['type']),
+    dosageForm: _nullableString(json['dosageForm']),
+    strength: _nullableString(json['strength']),
+    manufacturer: _nullableString(json['manufacturer']),
+    packageContainer: _nullableString(json['packageContainer']),
+    packageSize: _nullableString(json['packageSize']),
   );
+}
+
+String? _descriptionPart(Object? value, int index) {
+  if (value is! String) return null;
+  final parts = value.split('|');
+  if (index >= parts.length) return null;
+  final part = parts[index].trim();
+  return part.isEmpty ? null : part;
 }
 
 class AdminOrder {
@@ -129,19 +164,59 @@ class AdminOrder {
   final DateTime createdAt;
 
   factory AdminOrder.fromJson(Map<String, dynamic> json) => AdminOrder(
-    id: json['id'] as String,
-    customerName: (json['customerName'] as String?) ?? 'Unknown customer',
-    customerEmail: (json['customerEmail'] as String?) ?? '',
+    id: '${json['id'] ?? ''}',
+    customerName: '${json['customerName'] ?? 'Unknown customer'}',
+    customerEmail: '${json['customerEmail'] ?? ''}',
     totalAmount: json['totalAmount'] is num
         ? json['totalAmount'] as num
         : num.tryParse('${json['totalAmount']}') ?? 0,
-    status: (json['status'] as String?) ?? '',
-    paymentStatus: (json['paymentStatus'] as String?) ?? '',
-    createdAt: DateTime.parse(json['createdAt'] as String),
+    status: '${json['status'] ?? ''}',
+    paymentStatus: '${json['paymentStatus'] ?? ''}',
+    createdAt: DateTime.tryParse('${json['createdAt']}') ?? DateTime.now(),
   );
 }
 
 int _int(Object? value) => value is num ? value.toInt() : 0;
+int? _nullableInt(Object? value) =>
+    value is num ? value.toInt() : int.tryParse('$value');
+String? _nullableString(Object? value) =>
+    value == null || '$value'.trim().isEmpty ? null : '$value';
+
+class AdminCategory {
+  const AdminCategory({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory AdminCategory.fromJson(Map<String, dynamic> json) =>
+      AdminCategory(id: '${json['id'] ?? ''}', name: '${json['name'] ?? ''}');
+}
+
+class AdminGeneric {
+  const AdminGeneric({required this.id, required this.name});
+
+  final int id;
+  final String name;
+
+  factory AdminGeneric.fromJson(Map<String, dynamic> json) => AdminGeneric(
+    id: _int(json['genericId']),
+    name: '${json['genericName'] ?? ''}',
+  );
+}
+
+class AdminMedicineOptions {
+  const AdminMedicineOptions({
+    required this.categories,
+    required this.generics,
+    required this.slugs,
+    required this.manufacturers,
+  });
+
+  final List<AdminCategory> categories;
+  final List<AdminGeneric> generics;
+  final List<String> slugs;
+  final List<String> manufacturers;
+}
 
 class AdminApiException implements Exception {
   const AdminApiException(this.message);
@@ -233,6 +308,7 @@ class AdminApiClient {
       if (medicines is! List) {
         throw const AdminApiException('The server sent invalid medicine data.');
       }
+
       return medicines
           .whereType<Map<String, dynamic>>()
           .map(AdminMedicine.fromJson)
@@ -241,6 +317,134 @@ class AdminApiClient {
       throw AdminApiException(
         ApiClient.serverMessageOf(error) ?? 'Could not load medicines.',
       );
+    }
+  }
+
+  Future<AdminMedicineOptions> getMedicineOptions() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/admin/medicine-options',
+      );
+      final data = response.data?['data'];
+      if (data is! Map<String, dynamic>) {
+        throw const AdminApiException(
+          'The server sent invalid medicine options.',
+        );
+      }
+      final categories = data['categories'];
+      final generics = data['generics'];
+      final slugs = data['slugs'];
+      final manufacturers = data['manufacturers'];
+      if (categories is! List || slugs is! List || manufacturers is! List) {
+        throw const AdminApiException(
+          'The server sent invalid medicine options.',
+        );
+      }
+      return AdminMedicineOptions(
+        categories: categories
+            .whereType<Map<String, dynamic>>()
+            .map(AdminCategory.fromJson)
+            .toList(growable: false),
+        generics: generics is List
+            ? generics
+                  .whereType<Map<String, dynamic>>()
+                  .map(AdminGeneric.fromJson)
+                  .where((generic) => generic.id > 0 && generic.name.isNotEmpty)
+                  .toList(growable: false)
+            : const [],
+        slugs: slugs.whereType<String>().toList(growable: false),
+        manufacturers: manufacturers.whereType<String>().toList(
+          growable: false,
+        ),
+      );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        return _getLegacyMedicineOptions();
+      }
+      throw AdminApiException(
+        ApiClient.serverMessageOf(error) ?? 'Could not load medicine options.',
+      );
+    }
+  }
+
+  Future<AdminMedicineOptions> _getLegacyMedicineOptions() async {
+    try {
+      final categoryResponse = await _api.dio.get<Map<String, dynamic>>(
+        '/categories',
+      );
+      final categoryData = categoryResponse.data?['data'];
+      final medicines = await listMedicines();
+      final genericOptions = await _getLegacyGenericOptions();
+      if (categoryData is! List) {
+        throw const AdminApiException(
+          'The server sent invalid category options.',
+        );
+      }
+      final slugs =
+          medicines
+              .map((medicine) => medicine.slug)
+              .whereType<String>()
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+      final manufacturers =
+          medicines
+              .map((medicine) => medicine.manufacturer)
+              .whereType<String>()
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+      return AdminMedicineOptions(
+        categories: categoryData
+            .whereType<Map<String, dynamic>>()
+            .map(AdminCategory.fromJson)
+            .toList(growable: false),
+        generics: genericOptions.isNotEmpty
+            ? genericOptions
+            : medicines
+                  .where((medicine) => medicine.genericId != null)
+                  .map(
+                    (medicine) => AdminGeneric(
+                      id: medicine.genericId!,
+                      name: medicine.genericName ?? '',
+                    ),
+                  )
+                  .where((generic) => generic.name.isNotEmpty)
+                  .fold<Map<int, AdminGeneric>>(
+                    {},
+                    (result, generic) => result..[generic.id] = generic,
+                  )
+                  .values
+                  .toList(growable: false),
+        slugs: slugs,
+        manufacturers: manufacturers,
+      );
+    } on DioException catch (error) {
+      throw AdminApiException(
+        ApiClient.serverMessageOf(error) ??
+            'Could not load categories and medicine options.',
+      );
+    }
+  }
+
+  Future<List<AdminGeneric>> _getLegacyGenericOptions() async {
+    try {
+      final response = await _api.dio.get<Map<String, dynamic>>(
+        '/generics',
+        queryParameters: {'limit': 1000},
+      );
+      final data = response.data?['data'];
+      final generics = data is Map<String, dynamic> ? data['generics'] : data;
+      if (generics is! List) return const [];
+      return generics
+          .whereType<Map<String, dynamic>>()
+          .map(AdminGeneric.fromJson)
+          .where((generic) => generic.id > 0 && generic.name.isNotEmpty)
+          .toList(growable: false);
+    } on DioException {
+      return const [];
     }
   }
 

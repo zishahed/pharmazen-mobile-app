@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/widgets/skeletons.dart';
 import '../../data/remote/admin_api_client.dart';
+import 'admin_medicine_form_screen.dart';
 
 class AdminMedicinesScreen extends ConsumerStatefulWidget {
   const AdminMedicinesScreen({super.key});
@@ -17,6 +18,7 @@ class _AdminMedicinesScreenState extends ConsumerState<AdminMedicinesScreen> {
   List<AdminMedicine>? _items;
   String _search = '';
   String? _error;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -25,26 +27,45 @@ class _AdminMedicinesScreenState extends ConsumerState<AdminMedicinesScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
     try {
       final items = await ref
           .read(adminApiClientProvider)
           .listMedicines(
             search: _search.trim().isEmpty ? null : _search.trim(),
           );
-      if (mounted) setState(() => _items = items);
-    } on AdminApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) {
+        setState(() {
+          _items = items;
+          _loading = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.toString();
+          _loading = false;
+        });
+      }
     }
   }
 
   Future<void> _edit([AdminMedicine? medicine]) async {
-    final data = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => _MedicineForm(medicine: medicine),
-    );
-    if (data == null || !mounted) return;
     try {
+      final options = await ref
+          .read(adminApiClientProvider)
+          .getMedicineOptions();
+      if (!mounted) return;
+      final data = await Navigator.of(context).push<Map<String, dynamic>>(
+        MaterialPageRoute(
+          builder: (_) =>
+              AdminMedicineFormScreen(options: options, medicine: medicine),
+        ),
+      );
+      if (data == null || !mounted) return;
       await ref
           .read(adminApiClientProvider)
           .saveMedicine(data, id: medicine?.id);
@@ -135,8 +156,8 @@ class _AdminMedicinesScreenState extends ConsumerState<AdminMedicinesScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            if (items == null && _error == null)
-              const MedicineListSkeleton(count: 5)
+            if (_loading && items == null)
+              const MedicineListSkeleton(count: 5, scrollable: false)
             else if (_error != null && items == null)
               _ErrorMessage(message: _error!, onRetry: _load)
             else if (items!.isEmpty)
@@ -195,129 +216,6 @@ class _MedicineCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _MedicineForm extends StatefulWidget {
-  const _MedicineForm({this.medicine});
-
-  final AdminMedicine? medicine;
-
-  @override
-  State<_MedicineForm> createState() => _MedicineFormState();
-}
-
-class _MedicineFormState extends State<_MedicineForm> {
-  late final TextEditingController _name;
-  late final TextEditingController _description;
-  late final TextEditingController _category;
-  late final TextEditingController _price;
-  late final TextEditingController _stock;
-  late final TextEditingController _expiry;
-  late bool _requiresPrescription;
-
-  @override
-  void initState() {
-    super.initState();
-    final medicine = widget.medicine;
-    _name = TextEditingController(text: medicine?.name);
-    _description = TextEditingController(text: medicine?.description);
-    _category = TextEditingController(text: medicine?.categoryId);
-    _price = TextEditingController(text: medicine?.price.toString());
-    _stock = TextEditingController(text: medicine?.stockQuantity.toString());
-    _expiry = TextEditingController(
-      text: medicine?.expiryDate?.toIso8601String().split('T').first,
-    );
-    _requiresPrescription = medicine?.requiresPrescription ?? false;
-  }
-
-  @override
-  void dispose() {
-    for (final controller in [
-      _name,
-      _description,
-      _category,
-      _price,
-      _stock,
-      _expiry,
-    ]) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  void _save() {
-    if (_name.text.trim().isEmpty ||
-        _category.text.trim().isEmpty ||
-        _price.text.trim().isEmpty ||
-        _stock.text.trim().isEmpty) {
-      return;
-    }
-    Navigator.pop(context, {
-      'name': _name.text.trim(),
-      'description': _description.text.trim(),
-      'categoryId': _category.text.trim(),
-      'price': double.tryParse(_price.text.trim()) ?? 0,
-      'stockQuantity': int.tryParse(_stock.text.trim()) ?? 0,
-      'expiryDate': _expiry.text.trim().isEmpty ? null : _expiry.text.trim(),
-      'requiresPrescription': _requiresPrescription,
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.medicine == null ? 'Add medicine' : 'Edit medicine'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Name'),
-            ),
-            TextField(
-              controller: _description,
-              decoration: const InputDecoration(labelText: 'Description'),
-            ),
-            TextField(
-              controller: _category,
-              decoration: const InputDecoration(labelText: 'Category ID'),
-            ),
-            TextField(
-              controller: _price,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Price'),
-            ),
-            TextField(
-              controller: _stock,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Stock quantity'),
-            ),
-            TextField(
-              controller: _expiry,
-              decoration: const InputDecoration(
-                labelText: 'Expiry date (YYYY-MM-DD)',
-              ),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Requires prescription'),
-              value: _requiresPrescription,
-              onChanged: (value) =>
-                  setState(() => _requiresPrescription = value),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _save, child: const Text('Save')),
-      ],
     );
   }
 }

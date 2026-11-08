@@ -167,7 +167,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                   accent: AppColors.primaryGreen,
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
-                      builder: (_) => const PharmacistPrescriptionsScreen(),
+                      builder: (_) => Scaffold(
+                        backgroundColor: AppColors.background,
+                        appBar: AppBar(
+                          title: const Text('Prescription reviews'),
+                        ),
+                        body: const PharmacistPrescriptionsScreen(),
+                      ),
                     ),
                   ),
                 ),
