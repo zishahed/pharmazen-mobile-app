@@ -6,6 +6,7 @@ import '../../data/providers/medicine_providers.dart';
 import '../../domain/models/medicine.dart';
 import '../../domain/models/medicine_details.dart';
 import '../cart/widgets/add_to_cart_button.dart';
+import '../auth/auth_providers.dart';
 
 class MedicineDetailScreen extends ConsumerStatefulWidget {
   const MedicineDetailScreen({super.key, required this.medicine});
@@ -54,11 +55,13 @@ class _MedicineDetailScreenState extends ConsumerState<MedicineDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final m = widget.medicine;
+    final auth = ref.watch(authProvider);
+    final showCart = !(auth is AuthSignedIn && auth.user.isAdmin);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(m.brandName),
-        actions: [AddToCartButton(medicine: m)],
+        actions: showCart ? [AddToCartButton(medicine: m)] : null,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())

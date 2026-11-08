@@ -11,6 +11,7 @@ import '../../data/providers/sync_providers.dart';
 import '../../data/sync/sync_engine.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
+import '../auth/auth_providers.dart';
 import 'widgets/medicines_widgets.dart';
 
 class MedicinesScreen extends ConsumerStatefulWidget {
@@ -156,6 +157,9 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
       );
     }
 
+    final auth = ref.read(authProvider);
+    final showCart = !(auth is AuthSignedIn && auth.user.isAdmin);
+
     // See browse_results_screen.dart for why the reload runs unconditionally.
     return RefreshIndicator(
       onRefresh: _refresh,
@@ -164,6 +168,7 @@ class _MedicinesScreenState extends ConsumerState<MedicinesScreen> {
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) => MedicineTile(
           medicine: results[index],
+          showCart: showCart,
           onTap: () => context.push('/medicine', extra: results[index]),
         ),
       ),

@@ -5,10 +5,16 @@ import '../../../domain/models/medicine.dart';
 import '../../cart/widgets/add_to_cart_button.dart';
 
 class MedicineTile extends StatelessWidget {
-  const MedicineTile({super.key, required this.medicine, this.onTap});
+  const MedicineTile({
+    super.key,
+    required this.medicine,
+    this.onTap,
+    this.showCart = true,
+  });
 
   final Medicine medicine;
   final VoidCallback? onTap;
+  final bool showCart;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +50,7 @@ class MedicineTile extends StatelessWidget {
         ),
         isThreeLine:
             meta.isNotEmpty && (medicine.genericName?.isNotEmpty ?? false),
-        trailing: AddToCartButton(medicine: medicine),
+        trailing: showCart ? AddToCartButton(medicine: medicine) : null,
       ),
     );
   }

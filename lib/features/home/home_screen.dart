@@ -4,24 +4,29 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../data/repositories/medicine_repository.dart';
+import '../admin/admin_dashboard_screen.dart';
 import '../cart/cart_providers.dart';
 import '../cart/cart_screen.dart';
+import '../auth/auth_providers.dart';
 import '../prescription/prescription_screen.dart';
+import '../prescription/pharmacist_prescriptions_screen.dart';
 import '../profile/profile_screen.dart';
 import 'widgets/connectivity_banner.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _navIndex = 0;
 
   @override
   Widget build(BuildContext context) {
+    final auth = ref.watch(authProvider);
+    final isAdmin = auth is AuthSignedIn && auth.user.isAdmin;
     return Scaffold(
       body: SafeArea(
         child: Column(
@@ -30,8 +35,12 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: switch (_navIndex) {
                 0 => _buildHome(context),
-                1 => const CartScreen(),
-                2 => const PrescriptionScreen(),
+                1 =>
+                  isAdmin ? const AdminDashboardScreen() : const CartScreen(),
+                2 =>
+                  isAdmin
+                      ? const PharmacistPrescriptionsScreen()
+                      : const PrescriptionScreen(),
                 3 => const ProfileScreen(),
                 _ => _buildPlaceholder(context),
               },
@@ -53,22 +62,35 @@ class _HomeScreenState extends State<HomeScreen> {
                 selectedIcon: Icon(Icons.home_rounded),
                 label: 'Home',
               ),
-              NavigationDestination(
-                icon: _CartIcon(
-                  icon: Icons.shopping_cart_outlined,
-                  count: count,
+              if (isAdmin) ...[
+                const NavigationDestination(
+                  icon: Icon(Icons.dashboard_outlined),
+                  selectedIcon: Icon(Icons.dashboard_rounded),
+                  label: 'Admin',
                 ),
-                selectedIcon: _CartIcon(
-                  icon: Icons.shopping_cart,
-                  count: count,
+                const NavigationDestination(
+                  icon: Icon(Icons.fact_check_outlined),
+                  selectedIcon: Icon(Icons.fact_check_rounded),
+                  label: 'Reviews',
                 ),
-                label: 'Cart',
-              ),
-              const NavigationDestination(
-                icon: Icon(Icons.description_outlined),
-                selectedIcon: Icon(Icons.description_rounded),
-                label: 'Prescription',
-              ),
+              ] else ...[
+                NavigationDestination(
+                  icon: _CartIcon(
+                    icon: Icons.shopping_cart_outlined,
+                    count: count,
+                  ),
+                  selectedIcon: _CartIcon(
+                    icon: Icons.shopping_cart,
+                    count: count,
+                  ),
+                  label: 'Cart',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.description_outlined),
+                  selectedIcon: Icon(Icons.description_rounded),
+                  label: 'Prescription',
+                ),
+              ],
               const NavigationDestination(
                 icon: Icon(Icons.person_outline_rounded),
                 selectedIcon: Icon(Icons.person_rounded),

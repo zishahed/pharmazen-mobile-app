@@ -8,6 +8,7 @@ import '../../data/sync/sync_engine.dart';
 import '../../data/repositories/medicine_repository.dart';
 import '../../domain/models/medicine.dart';
 import '../../app/widgets/skeletons.dart';
+import '../auth/auth_providers.dart';
 import '../medicines/widgets/medicines_widgets.dart';
 
 class BrowseResultsScreen extends ConsumerStatefulWidget {
@@ -63,17 +64,10 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(widget.value, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: _buildBody(),
-        ),
+        child: Padding(padding: const EdgeInsets.all(20), child: _buildBody()),
       ),
     );
   }
@@ -99,6 +93,9 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
       );
     }
 
+    final auth = ref.read(authProvider);
+    final showCart = !(auth is AuthSignedIn && auth.user.isAdmin);
+
     // Wrapped in RefreshIndicator so a user who suspects the bundled catalog is
     // stale can pull it down. The manual trigger bypasses the 15-minute floor,
     // so this always reaches the server rather than no-opping.
@@ -109,6 +106,7 @@ class _BrowseResultsScreenState extends ConsumerState<BrowseResultsScreen> {
         separatorBuilder: (_, _) => const SizedBox(height: 10),
         itemBuilder: (context, index) => MedicineTile(
           medicine: results[index],
+          showCart: showCart,
           onTap: () => context.push('/medicine', extra: results[index]),
         ),
       ),
